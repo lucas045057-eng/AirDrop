@@ -1,0 +1,9 @@
+.git
+.env
+data
+secrets
+**/__pycache__
+**/node_modules
+frontend/dist
+test-results
+server-runtime

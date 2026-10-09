@@ -1,0 +1,32 @@
+# Add this file to the existing isolated development Compose project.
+# Only the HTTPS gateway is public; backend and original frontend stay on loopback.
+services:
+  backend:
+    environment:
+      AIRDROP_SECURE_COOKIE: "true"
+      AIRDROP_ALLOWED_ORIGINS: "${AIRDROP_PUBLIC_ORIGIN:?Set AIRDROP_PUBLIC_ORIGIN}"
+  public-web:
+    image: airdrop-v2-dev-frontend:local
+    entrypoint: ["nginx"]
+    command: ["-g", "daemon off;"]
+    user: "101:101"
+    ports:
+      - "0.0.0.0:${AIRDROP_PUBLIC_PORT:-18443}:8443"
+    volumes:
+      - ./deploy/public-ip.nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./secrets/public-web/server.crt:/etc/airdrop-tls/server.crt:ro
+      - ./secrets/public-web/server.key:/etc/airdrop-tls/server.key:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    mem_limit: 48m
+    cpus: 0.15
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,uid=101,gid=101,mode=1770
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5

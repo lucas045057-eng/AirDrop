@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>AirDrop V2 · 钱包备份解密</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #f3f6fc;
+        color: #162744;
+        font:
+          15px/1.6 system-ui,
+          "Microsoft YaHei",
+          sans-serif;
+      }
+      main {
+        max-width: 820px;
+        margin: 48px auto;
+        padding: 30px;
+        background: #fff;
+        border: 1px solid #dce4f2;
+        border-radius: 18px;
+        box-shadow: 0 12px 40px #20334e0a;
+      }
+      h1 {
+        font-size: 26px;
+        line-height: 1.3;
+        margin: 14px 0;
+      }
+      h2 {
+        font-size: 18px;
+        margin: 0 0 12px;
+      }
+      p {
+        margin: 8px 0 18px;
+        color: #5b6980;
+      }
+      .tag {
+        display: inline-block;
+        background: #edf2ff;
+        color: #405fc5;
+        font-size: 12px;
+        padding: 4px 10px;
+        border-radius: 6px;
+      }
+      label.field {
+        display: block;
+        margin: 20px 0 8px;
+        font-weight: 600;
+      }
+      input[type="password"],
+      input[type="file"] {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #c7d2e5;
+        border-radius: 8px;
+        font: inherit;
+        background: white;
+      }
+      button {
+        border: 0;
+        border-radius: 8px;
+        background: #4366e9;
+        color: white;
+        font: inherit;
+        padding: 11px 18px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      button.secondary {
+        background: #eef2fa;
+        color: #334c76;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 22px;
+      }
+      .status {
+        padding: 12px 16px;
+        margin: 20px 0;
+        border-radius: 8px;
+        background: #edf5ff;
+        color: #315e93;
+      }
+      .status.error {
+        background: #fff1f1;
+        color: #ab3333;
+      }
+      .status:empty {
+        display: none;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      .results {
+        margin-top: 28px;
+        padding-top: 24px;
+        border-top: 1px solid #e0e7f1;
+      }
+      .wallets {
+        max-height: 360px;
+        overflow: auto;
+        border: 1px solid #d9e3f2;
+        border-radius: 9px;
+        margin: 15px 0;
+      }
+      .wallet-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 14px;
+        border-bottom: 1px solid #e6edf7;
+        cursor: pointer;
+      }
+      .wallet-row:last-child {
+        border-bottom: 0;
+      }
+      .wallet-row input {
+        margin-top: 6px;
+      }
+      .wallet-row span {
+        min-width: 0;
+      }
+      .wallet-row strong {
+        display: block;
+        font-size: 14px;
+      }
+      .wallet-row code {
+        display: block;
+        overflow-wrap: anywhere;
+        font-size: 12px;
+        color: #50617d;
+      }
+      .muted {
+        font-size: 13px;
+        color: #6c788d;
+      }
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      footer {
+        margin-top: 26px;
+        font-size: 12px;
+        color: #6c788d;
+      }
+      .download-note {
+        padding: 12px 15px;
+        background: #fff8e8;
+        border: 1px solid #f0dfb5;
+        border-radius: 8px;
+        color: #78541b;
+        font-size: 13px;
+      }
+      input:focus-visible,
+      button:focus-visible {
+        outline: 3px solid #91adff;
+        outline-offset: 2px;
+      }
+      @media (max-width: 600px) {
+        main {
+          margin: 12px;
+          padding: 22px 18px;
+          border-radius: 12px;
+        }
+        h1 {
+          font-size: 23px;
+        }
+        .actions button {
+          flex: 1;
+        }
+        input {
+          min-width: 0;
+        }
+      }
+      body {
+        background: #fff;
+      }
+      main {
+        margin: 0;
+        max-width: none;
+        padding: 0 2px;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>
+        先在后台「钱包中心 → 加密备份」设置至少 12
+        个字符的密码并下载文件，再选择文件并输入同一个密码。
+      </p>
+      <form id="decrypt-form">
+        <label class="field" for="backup">加密备份文件</label>
+        <input id="backup" type="file" accept=".enc,.json" required />
+        <label class="field" for="password">下载备份时设置的密码</label>
+        <input
+          id="password"
+          type="password"
+          minlength="12"
+          maxlength="200"
+          autocomplete="off"
+          required
+        />
+        <div class="actions">
+          <button id="decrypt" type="submit">解密备份</button>
+        </div>
+      </form>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+      <section id="results" class="results" hidden>
+        <h2>选择需要导出的钱包</h2>
+        <p class="muted">
+          这里仅显示钱包名称和公开地址；私钥写入你下载的 JSON 文件。
+        </p>
+        <label class="check"
+          ><input id="select-all" type="checkbox" />选择全部钱包</label
+        >
+        <div id="wallets" class="wallets"></div>
+        <p id="selection" class="muted"></p>
+        <div class="download-note">
+          下载文件包含明文私钥，请自行保管。可用记事本打开，按地址查找对应的
+          private_key。
+        </div>
+        <div class="actions">
+          <button id="export" type="button" disabled>
+            下载选中钱包私钥 JSON
+          </button>
+          <button id="clear" class="secondary" type="button">
+            清空已解密内容
+          </button>
+        </div>
+      </section>
+      <footer>
+        文件和密码在当前浏览器中处理。本页面无需联网，不会上传备份、保存密码或写入浏览器存储。页面关闭后，已下载的文件继续保留。
+      </footer>
+    </main>
+    <script>
+      (() => {
+        "use strict";
+        const $ = (id) => document.getElementById(id);
+        const decoder = new TextDecoder("utf-8", { fatal: true });
+        const encoder = new TextEncoder();
+        let records = [];
+        let running = false;
+        let operation = 0;
+        let downloadUrl = null;
+        let revokeTimer = null;
+        function show(message, isError = false) {
+          $("status").textContent = message;
+          $("status").className = isError ? "status error" : "status";
+        }
+        function releaseDownload() {
+          if (revokeTimer) clearTimeout(revokeTimer);
+          if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+          revokeTimer = null;
+          downloadUrl = null;
+        }
+        function reset() {
+          records = [];
+          $("wallets").replaceChildren();
+          $("results").hidden = true;
+          $("select-all").checked = false;
+          $("select-all").indeterminate = false;
+          $("export").disabled = true;
+          $("password").value = "";
+          releaseDownload();
+        }
+        function bytes(value) {
+          if (typeof value !== "string") throw new Error("invalid backup");
+          return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
+        }
+        function selectedIndices() {
+          return [...$("wallets").querySelectorAll("input:checked")].map(
+            (input) => Number(input.value),
+          );
+        }
+        function selectionChanged() {
+          const n = selectedIndices().length;
+          $("selection").textContent = `已选择 ${n} / ${records.length} 个钱包`;
+          $("export").disabled = n === 0;
+          $("select-all").checked = n > 0 && n === records.length;
+          $("select-all").indeterminate = n > 0 && n < records.length;
+        }
+        $("backup").addEventListener("change", () => {
+          operation++;
+          reset();
+          show("");
+        });
+        $("decrypt-form").addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (running) return;
+          const file = $("backup").files[0];
+          let password = $("password").value;
+          if (!file || password.length < 12) return;
+          reset();
+          if (!crypto.subtle) {
+            show(
+              "当前浏览器不支持本地解密，请使用新版 Chrome 或 Edge 打开此文件。",
+              true,
+            );
+            return;
+          }
+          if (file.size > 2 * 1024 * 1024) {
+            show("备份文件超过 2 MiB，请选择 AirDrop V2 钱包备份文件。", true);
+            return;
+          }
+          running = true;
+          $("decrypt").disabled = true;
+          const current = ++operation;
+          show("正在校验和解密备份…");
+          try {
+            const body = JSON.parse(await file.text());
+            if (body.format !== "airdrop-v2-backup-v1")
+              throw new Error("invalid backup");
+            const salt = bytes(body.salt),
+              nonce = bytes(body.nonce),
+              ciphertext = bytes(body.data);
+            if (
+              salt.length !== 16 ||
+              nonce.length !== 12 ||
+              ciphertext.length < 16
+            )
+              throw new Error("invalid backup");
+            const material = await crypto.subtle.importKey(
+              "raw",
+              encoder.encode(password),
+              "PBKDF2",
+              false,
+              ["deriveKey"],
+            );
+            password = "";
+            const key = await crypto.subtle.deriveKey(
+              { name: "PBKDF2", hash: "SHA-256", salt, iterations: 600000 },
+              material,
+              { name: "AES-GCM", length: 256 },
+              false,
+              ["decrypt"],
+            );
+            const plaintext = await crypto.subtle.decrypt(
+              {
+                name: "AES-GCM",
+                iv: nonce,
+                additionalData: encoder.encode("airdrop-v2-backup-v1"),
+                tagLength: 128,
+              },
+              key,
+              ciphertext,
+            );
+            let decoded;
+            try {
+              decoded = JSON.parse(decoder.decode(plaintext));
+            } finally {
+              new Uint8Array(plaintext).fill(0);
+            }
+            if (!Array.isArray(decoded) || decoded.length > 1000)
+              throw new Error("invalid backup");
+            const seen = new Set();
+            for (const row of decoded) {
+              if (
+                !row ||
+                !["EVM", "SOLANA"].includes(row.chain) ||
+                typeof row.address !== "string" ||
+                typeof row.private_key !== "string" ||
+                !row.private_key.length
+              )
+                throw new Error("invalid backup");
+              if (
+                row.chain === "EVM" &&
+                !/^(?:0x)?[0-9a-fA-F]{64}$/.test(row.private_key)
+              )
+                throw new Error("invalid backup");
+              if (
+                row.chain === "SOLANA" &&
+                !/^[1-9A-HJ-NP-Za-km-z]{80,100}$/.test(row.private_key)
+              )
+                throw new Error("invalid backup");
+              const identity = row.chain + ":" + row.address;
+              if (seen.has(identity)) throw new Error("invalid backup");
+              seen.add(identity);
+            }
+            if (current !== operation) return;
+            records = decoded;
+            const fragment = document.createDocumentFragment();
+            records.forEach((row, index) => {
+              const label = document.createElement("label");
+              label.className = "wallet-row";
+              const input = document.createElement("input");
+              input.type = "checkbox";
+              input.value = String(index);
+              input.addEventListener("change", selectionChanged);
+              const text = document.createElement("span");
+              const title = document.createElement("strong");
+              title.textContent = `${row.chain} · ${row.name || "未命名钱包"}`;
+              const address = document.createElement("code");
+              address.textContent = row.address;
+              text.append(title, address);
+              label.append(input, text);
+              fragment.append(label);
+            });
+            $("wallets").replaceChildren(fragment);
+            $("results").hidden = false;
+            selectionChanged();
+            show(
+              `备份校验通过，共 ${records.length} 个钱包。请选择需要获取私钥的钱包。`,
+            );
+          } catch {
+            if (current === operation) {
+              reset();
+              show(
+                "解密失败：密码错误、文件损坏，或不是 AirDrop V2 钱包备份。请重新选择文件并输入备份时设置的密码。",
+                true,
+              );
+            }
+          } finally {
+            password = "";
+            running = false;
+            $("decrypt").disabled = false;
+          }
+        });
+        $("select-all").addEventListener("change", () => {
+          for (const input of $("wallets").querySelectorAll("input"))
+            input.checked = $("select-all").checked;
+          selectionChanged();
+        });
+        $("export").addEventListener("click", () => {
+          const indices = selectedIndices();
+          if (!indices.length) return;
+          const selected = indices.map((index) => {
+            const row = records[index];
+            return {
+              id: row.id,
+              chain: row.chain,
+              name: row.name || "",
+              address: row.address,
+              private_key: row.private_key,
+            };
+          });
+          releaseDownload();
+          downloadUrl = URL.createObjectURL(
+            new Blob([JSON.stringify(selected, null, 2)], {
+              type: "application/json;charset=utf-8",
+            }),
+          );
+          const link = document.createElement("a");
+          link.href = downloadUrl;
+          link.download = "airdrop-wallet-private-keys.json";
+          document.body.append(link);
+          link.click();
+          link.remove();
+          revokeTimer = setTimeout(releaseDownload, 30000);
+          show(
+            `已开始下载 ${selected.length} 个钱包的私钥文件。文件中的 private_key 即对应地址的私钥。`,
+          );
+        });
+        $("clear").addEventListener("click", () => {
+          operation++;
+          reset();
+          show("已清空当前页面的解密内容。");
+        });
+        window.addEventListener("pagehide", () => {
+          operation++;
+          reset();
+        });
+      })();
+    </script>
+  </body>
+</html>

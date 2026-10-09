@@ -1,0 +1,54 @@
+# AirDrop V2
+
+中文钱包、项目与 Python 脚本管理平台，使用 FastAPI、React/TypeScript、SQLAlchemy/Alembic 和 SQLite WAL，支持独立 Docker Compose 部署。
+
+当前投产范围为**管理功能**：钱包生成与导入、分组、加密备份、浏览器内解密、脚本上传与分析、规则或外部 AI 适配、版本审核、项目绑定、任务资料和审计。**脚本执行、执行重试、自动调度、真实签名、RPC 与链上交易均关闭。**
+
+仓库不提供演示初始化接口、模拟交易接口、演示样例或预置业务记录。首次安装只有管理员账号，钱包和项目由管理员创建。
+
+## 启动
+
+需要 Python 3.12+、Docker Engine 和 Docker Compose v2。仅在当前项目目录创建配置、密钥、专用容器和数据卷。
+
+```bash
+bash scripts/start.sh
+```
+
+Windows PowerShell：
+
+```powershell
+pwsh -File scripts/start.ps1
+```
+
+访问 <http://127.0.0.1:18080>。首次安装的随机管理员密码保存在 `secrets/dev-login.txt`，不得提交该文件。共享服务器启动与 HTTPS 配置见 [部署说明](docs/DEPLOYMENT.md)。
+
+已有实例升级时保留 `.env`、`secrets/` 和数据卷，禁止重新生成主密钥。管理模式保持 `AIRDROP_EXECUTION_ENABLED=false`。
+
+## 开发与检查
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-lock.txt
+python scripts/init_instance.py
+alembic upgrade head
+pytest -q
+```
+
+```bash
+cd frontend
+npm ci
+npm run build
+```
+
+队列与 Runner 回归只使用隔离数据库和开发者自己的受控测试输入，不会为部署开放执行或提供真实签名能力。
+
+## 文档
+
+- [操作流程](docs/OPERATION_GUIDE.md)
+- [投产范围与限制](docs/PRODUCTION_STATUS.md)
+- [部署和升级](docs/DEPLOYMENT.md)
+- [密钥与备份](docs/SECURITY.md)
+- [删除规则](docs/DELETION.md)
+
+所有业务接口需要管理员会话，写操作需要 CSRF 校验。实际密码、私钥、主密钥、数据库、备份和依赖目录不进入 Git 或源码归档。

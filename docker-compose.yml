@@ -1,0 +1,95 @@
+services:
+  init:
+    build:
+      context: .
+      dockerfile: deploy/backend.Dockerfile
+    user: "0:0"
+    command: ["python", "deploy/init_volumes.py"]
+    network_mode: none
+    volumes:
+      - ./secrets/master.key:/input/master.key:ro
+      - service-secrets:/service-secrets
+      - app-data:/app/data
+      - runner-bus:/bus
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/backend.Dockerfile
+    env_file: .env
+    environment:
+      AIRDROP_DATABASE_URL: sqlite:////app/data/airdrop.db
+      AIRDROP_MASTER_KEY_FILE: /run/secrets/master.key
+      AIRDROP_RUNNER_DIR: /bus
+    volumes:
+      - app-data:/app/data
+      - service-secrets:/run/secrets:ro
+      - runner-bus:/bus
+    ports: ["127.0.0.1:${AIRDROP_API_PORT:-18000}:8000"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/backend.Dockerfile
+    command: ["python", "-m", "worker.main"]
+    env_file: .env
+    environment:
+      AIRDROP_DATABASE_URL: sqlite:////app/data/airdrop.db
+      AIRDROP_MASTER_KEY_FILE: /run/secrets/master.key
+      AIRDROP_RUNNER_DIR: /bus
+      AIRDROP_WORKER_ID: worker-1
+    volumes:
+      - app-data:/app/data
+      - runner-bus:/bus
+      - service-secrets:/run/secrets:ro
+    depends_on:
+      backend: {condition: service_healthy}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import time; from backend.db import Session; from backend.models import Worker; s=Session(); w=s.get(Worker,'worker-1'); assert w and time.time()-w.heartbeat_at<30"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  runner:
+    build:
+      context: .
+      dockerfile: deploy/runner.Dockerfile
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: 1
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=128m,uid=10001,gid=10001"]
+    volumes: ["runner-bus:/bus"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,time; assert time.time()-json.load(open('/bus/heartbeat.json'))['at']<10"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/frontend.Dockerfile
+    ports: ["127.0.0.1:${AIRDROP_WEB_PORT:-18080}:8080"]
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+volumes:
+  app-data:
+  runner-bus:
+  service-secrets:

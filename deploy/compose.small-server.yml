@@ -1,0 +1,23 @@
+# Optional limits for a shared development server with approximately 2 GiB RAM.
+# Invoke with both -f docker-compose.yml -f deploy/compose.small-server.yml.
+services:
+  init:
+    image: airdrop-v2-dev-backend:local
+    mem_limit: 128m
+    cpus: 0.25
+  backend:
+    image: airdrop-v2-dev-backend:local
+    mem_limit: 192m
+    cpus: 0.5
+  worker:
+    image: airdrop-v2-dev-backend:local
+    mem_limit: 160m
+    cpus: 0.25
+  runner:
+    image: airdrop-v2-dev-runner:local
+    mem_limit: 160m
+    cpus: 0.5
+  frontend:
+    image: airdrop-v2-dev-frontend:local
+    mem_limit: 48m
+    cpus: 0.1

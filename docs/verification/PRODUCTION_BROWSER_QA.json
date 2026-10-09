@@ -1,0 +1,25 @@
+{
+  "at": "2026-10-09T11:45:54.557Z",
+  "baseUrl": "https://47.98.183.77:18443",
+  "mode": "management",
+  "checks": [
+    "public-login-and-management-capabilities",
+    "six-pages-without-demonstration-content",
+    "demo-and-mock-api-removed-from-public-routing",
+    "evm-solana-generation-and-group-assignment",
+    "integrated-local-decrypt-tool-remains-available",
+    "script-upload-rules-adaptation-review-and-mock-ai-rejection",
+    "execution-test-retry-and-publish-denied-without-queue-records",
+    "disabled-plan-save-and-activation-denied",
+    "execution-controls-and-schedule-activation-disabled-in-ui",
+    "bulk-wallet-deletion-preserves-bound-wallet",
+    "management-mobile-layout-and-modal-controls"
+  ],
+  "errors": [],
+  "execution_enabled": false,
+  "real_signing_enabled": false,
+  "fixture_only": true,
+  "fixture_cleaned": true,
+  "user_private_keys_accessed": false,
+  "secret_values_in_report": false
+}
