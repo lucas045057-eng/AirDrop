@@ -133,10 +133,11 @@ def redact(source: str) -> tuple[str, int]:
             result.append('# [REDACTED: sensitive literal]\n')
             count += 1
         else:
-            clean, n = HEX_SECRET.subn('[REDACTED]',line)
+            clean, url_count = re.subn(r'([a-zA-Z][a-zA-Z0-9+.-]*://)[^\s/@:]+:[^\s/@]+@', r'\1[REDACTED]@', line)
+            clean, n = HEX_SECRET.subn('[REDACTED]',clean)
             clean, m = TOKEN_SECRET.subn('[REDACTED]',clean)
             result.append(clean)
-            count += n+m
+            count += n+m+url_count
     return ''.join(result), count
 
 

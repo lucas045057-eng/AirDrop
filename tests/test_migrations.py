@@ -17,7 +17,7 @@ def test_migration_upgrade_downgrade_upgrade(tmp_path):
 
 
 def test_receipts_backfill_only_formal_executions(tmp_path):
-    from sqlalchemy import create_engine
+    from sqlalchemy import create_engine, MetaData, Table, insert
     from sqlalchemy.orm import Session
     from backend.models import Project, Artifact, ScriptPackage, ScriptVersion, Task, Execution
     path = tmp_path/'receipts.db'
@@ -33,9 +33,13 @@ def test_receipts_backfill_only_formal_executions(tmp_path):
         version = ScriptVersion(package_id=package.id, version=1, original_artifact_id=artifact.id,
                                 source_artifact_id=artifact.id, analysis={})
         db.add(version);db.flush()
-        task = Task(project_id=project.id, script_version_id=version.id, name='migration-test')
-        db.add(task);db.flush()
-        db.add_all([Execution(task_id=task.id, project_id=project.id, script_version_id=version.id,
+        # Seed the historical schema through reflection: the current ORM has V2.1 columns.
+        from backend.models import uid
+        task_id = uid()
+        legacy_tasks = Table('tasks', MetaData(), autoload_with=engine)
+        db.execute(insert(legacy_tasks).values(id=task_id, project_id=project.id, script_version_id=version.id,
+                   name='migration-test', batch_size=100, max_retries=0, enabled=True))
+        db.add_all([Execution(task_id=task_id, project_id=project.id, script_version_id=version.id,
                              period=period, is_test=is_test) for period, is_test in [('2026-10-09', False), ('test:fixture', True)]])
         db.commit()
     engine.dispose()

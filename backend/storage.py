@@ -77,3 +77,16 @@ def encode_files(files):
 
 def decode_files(data):
     return {k:base64.b64decode(v,validate=True) for k,v in json.loads(data).items()}
+
+
+def artifact_fingerprint(artifact) -> str:
+    """Stream ciphertext integrity without control-plane bulk decryption."""
+    path = Path(artifact.path)
+    root = (settings.data_dir / 'artifacts').resolve()
+    if path.is_symlink() or path.resolve().parent != root or path.name != artifact.sha256 + '.enc':
+        raise ValueError('工件位置无效')
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        while block := stream.read(256_000):
+            digest.update(block)
+    return digest.hexdigest()

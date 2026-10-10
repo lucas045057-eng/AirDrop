@@ -1,0 +1,37 @@
+# Opt-in only. Review live host headroom and current overrides before deployment.
+services:
+  adapter:
+    profiles: [smart-adapter]
+    build:
+      context: .
+      dockerfile: deploy/backend.Dockerfile
+    command: [python, -m, worker.adapter_worker]
+    env_file: .env
+    environment:
+      AIRDROP_DATABASE_URL: sqlite:////app/data/airdrop.db
+      AIRDROP_MASTER_KEY_FILE: /run/secrets/master.key
+      AIRDROP_DATA_DIR: /app/data
+      AIRDROP_EXECUTION_ENABLED: "false"
+      AIRDROP_ADAPTER_MEMORY_MIB: "256"
+      AIRDROP_ADAPTER_TIMEOUT_SECONDS: "90"
+      AIRDROP_ADAPTER_QUEUE_LIMIT: "8"
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+    volumes:
+      - app-data:/app/data
+      - service-secrets:/run/secrets:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    mem_limit: 512m
+    cpus: 0.5
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m,uid=10001,gid=10001"]
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import time; from backend.db import Session; from backend.models import Worker; s=Session(); w=s.get(Worker,'adapter-1'); assert w and time.time()-w.heartbeat_at<30"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped

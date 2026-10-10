@@ -1,5 +1,6 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -16,6 +17,10 @@ class Settings(BaseSettings):
     worker_id: str = "worker-local"
     runner_dir: Path = Path("data/runner")
     execution_enabled: bool = False
+    adapter_queue_limit: int = Field(default=8, ge=1, le=32)
+    adapter_memory_mib: int = Field(default=256, ge=32, le=512)
+    adapter_timeout_seconds: int = Field(default=90, ge=5, le=180)
+    adapter_lease_seconds: int = Field(default=120, ge=10, le=300)
 
 
 settings = Settings()

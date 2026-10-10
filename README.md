@@ -6,6 +6,19 @@
 
 仓库不提供演示初始化接口、模拟交易接口、演示样例或预置业务记录。首次安装只有管理员账号，钱包和项目由管理员创建。
 
+## V2.1 智能脚本接入
+
+新增多文件静态发现、交互式脚本功能拆分、SHA-256 绑定的脱敏 AI 发送审核、受控非交互入口、逐功能 Diff 审核、新版本和独立任务配置。原版本保留，真实执行和资金权限继续关闭。
+
+脚本中心点击版本旁的 **智能分析** 开始。深度分析依赖可选的独立 Adapter Worker；默认 Compose 不会启动这个服务。
+
+- [网页操作与分析边界](docs/AI_SCRIPT_ADAPTER.md)
+- [功能协议与 API](docs/AI_FEATURE_PROTOCOL.md)
+- [隔离部署、资源与回滚](docs/AI_ADAPTER_DEPLOYMENT.md)
+- [实际验收结果](docs/AI_ADAPTER_VALIDATION.md)
+
+本次仅完成本地开发与测试，生产部署需要另行授权，并核对现有 Backend 内存修复及服务器余量。Fake Provider 仅存在测试夹具中，不是生产配置选项。
+
 ## 启动
 
 需要 Python 3.12+、Docker Engine 和 Docker Compose v2。仅在当前项目目录创建配置、密钥、专用容器和数据卷。

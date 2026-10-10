@@ -13,7 +13,8 @@ from backend.models import (
     PointSnapshot, Project, ProjectGroupBinding, ProjectWalletBinding, Schedule,
     ScheduleOccurrence, ScriptAdaptation, ScriptPackage, ScriptVersion, SystemSetting,
     Task, TransactionIntent, TransactionPolicy, User, Wallet, WalletGroup,
-    WalletGroupMember, WalletLock, WalletSecret, WalletTaskResult, Workflow, WorkflowStep)
+    WalletGroupMember, WalletLock, WalletSecret, WalletTaskResult, Workflow, WorkflowStep,
+    ScriptAnalysisJob, ScriptFeature, ScriptTransformationDraft)
 from backend.queue import locked_db
 from backend.storage import artifact_lock
 
@@ -57,6 +58,14 @@ def safe_artifact_path(obj):
     return path
 
 
+def artifact_referenced(db, identity):
+    return any(count(db, model, condition) for model, condition in [
+        (ScriptVersion, or_(ScriptVersion.original_artifact_id == identity, ScriptVersion.source_artifact_id == identity)),
+        (ScriptAnalysisJob, or_(ScriptAnalysisJob.source_artifact_id == identity, ScriptAnalysisJob.preview_artifact_id == identity)),
+        (ScriptTransformationDraft, or_(ScriptTransformationDraft.source_artifact_id == identity,
+            ScriptTransformationDraft.output_artifact_id == identity, ScriptTransformationDraft.diff_artifact_id == identity))])
+
+
 def remove(kind, identity, user):
     models = {'script': ScriptVersion, 'wallet': Wallet, 'group': WalletGroup,
               'project': Project, 'task': Task, 'schedule': Schedule, 'execution': Execution,
@@ -70,14 +79,17 @@ def remove(kind, identity, user):
                 if kind == 'script':
                     guard(db, [('任务', Task, Task.script_version_id == identity),
                                ('执行历史', Execution, Execution.script_version_id == identity),
+                               ('分析任务', ScriptAnalysisJob, ScriptAnalysisJob.source_version_id == identity),
+                               ('适配草稿', ScriptTransformationDraft, or_(ScriptTransformationDraft.source_version_id == identity,
+                                                                         ScriptTransformationDraft.result_version_id == identity)),
                                ('后续适配版本', ScriptAdaptation, ScriptAdaptation.source_version_id == identity)])
                     artifact_ids = {obj.original_artifact_id, obj.source_artifact_id}
                     package_id = obj.package_id
                     remove_rows(db, removed, ScriptAdaptation, ScriptAdaptation.result_version_id == identity)
+                    remove_rows(db, removed, ScriptFeature, ScriptFeature.version_id == identity)
                     db.delete(obj);db.flush()
                     for artifact_id in artifact_ids:
-                        if count(db, ScriptVersion, or_(ScriptVersion.original_artifact_id == artifact_id,
-                                                      ScriptVersion.source_artifact_id == artifact_id)):continue
+                        if artifact_referenced(db, artifact_id):continue
                         artifact = db.get(Artifact, artifact_id)
                         path = safe_artifact_path(artifact)
                         db.delete(artifact);db.flush()

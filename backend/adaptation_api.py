@@ -43,7 +43,7 @@ async def adapt(version_id:str,body:AdaptRequest,db:Session=Depends(get_db),user
         user_id=user.id
     if body.manifest.package_id!=version.package_id:raise HTTPException(422,'Manifest 包 ID 不匹配')
     if body.manifest.entrypoint not in files or any(s not in files for s in body.manifest.steps):raise HTTPException(422,'指定入口或步骤不存在')
-    if version.analysis['interactive']:raise HTTPException(422,'检测到 input() 交互，须人工移除或提交已审核的代码补丁')
+    if version.analysis['interactive']:raise HTTPException(422,'检测到交互，请使用“AI 智能分析”识别功能并生成非交互入口；原始版本保留')
     if version.analysis['platform']!='linux':raise HTTPException(422,'检测到 Windows 特有依赖，请人工移植')
     if len(body.path_mappings)>30 or any(target!=body.manifest.wallet_path for target in body.path_mappings.values()):raise HTTPException(422,'路径映射必须指向 Manifest 钱包输入路径')
     try:
@@ -90,6 +90,9 @@ def diff(version_id:str,db:Session=Depends(get_db)):
 @router.post('/{version_id}/approve')
 def approve(version_id:str,db:Session=Depends(get_db),user:User=Depends(admin)):
     version=get_version(db,version_id)
+    from backend.models import ScriptFeature
+    if db.scalar(select(ScriptFeature.id).where(ScriptFeature.version_id==version_id).limit(1)):
+        raise HTTPException(409,'智能适配版本必须在分析详情逐项审核，不允许通过旧版接口绕过功能审核')
     if version.status not in {'REVIEW_REQUIRED','APPROVED','TESTED','PUBLISHED'}:raise HTTPException(409,'请先适配此版本')
     adaptation=db.scalar(select(ScriptAdaptation).where(ScriptAdaptation.result_version_id==version_id))
     adaptation.approved_by=user.id

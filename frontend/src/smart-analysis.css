@@ -1,0 +1,194 @@
+.smart-analysis {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.smart-heading,
+.smart-toolbar,
+.smart-feature-title,
+.smart-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.smart-heading h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.smart-heading p {
+  margin: 7px 0 0;
+  color: #667690;
+}
+.smart-section > :not(.panel-title) {
+  margin: 16px 22px;
+}
+.smart-grid,
+.smart-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.smart-feature {
+  border: 1px solid #e0e6ef;
+  border-radius: 10px;
+  padding: 18px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.smart-feature p {
+  margin: 12px 0;
+  line-height: 1.6;
+}
+.smart-status {
+  font-size: 11px;
+  background: #eef2ff;
+  color: #3853aa;
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+.smart-facts {
+  display: grid;
+  gap: 10px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.smart-facts div {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 8px;
+}
+.smart-facts dt {
+  color: #667690;
+}
+.smart-facts dd {
+  margin: 0;
+  line-height: 1.6;
+}
+.smart-analysis details {
+  border-top: 1px solid #edf0f5;
+  padding: 14px 0;
+}
+.smart-analysis summary {
+  cursor: pointer;
+  color: #405aad;
+  font-weight: 500;
+}
+.smart-pre,
+.smart-diff pre,
+.smart-evidence pre {
+  font:
+    12px/1.7 Consolas,
+    monospace;
+  background: #f6f8fc;
+  padding: 14px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-height: 460px;
+  overflow: auto;
+  min-width: 0;
+}
+.smart-evidence {
+  margin-top: 12px;
+}
+.smart-evidence small {
+  color: #667690;
+}
+.smart-table {
+  overflow-x: auto;
+}
+.smart-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.smart-tags span {
+  background: #f1f4fa;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+.smart-warning,
+.smart-error,
+.smart-success {
+  border-radius: 8px;
+  padding: 14px 18px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.smart-warning {
+  background: #fff8e9;
+  color: #815a20;
+}
+.smart-error {
+  background: #fef0f0;
+  color: #a52929;
+}
+.smart-success {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #edf9f2;
+  color: #25734b;
+}
+.smart-progress {
+  padding: 14px;
+  border: 1px solid #dfe5f8;
+  border-radius: 8px;
+  background: #f8faff;
+}
+.smart-progress span {
+  font-size: 12px;
+  color: #667690;
+}
+.smart-analysis .smart-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.7;
+}
+.smart-check input {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+.smart-analysis button.primary,
+.smart-analysis button.secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: normal;
+}
+.smart-analysis .field {
+  margin-bottom: 16px;
+}
+.smart-analysis .field input,
+.smart-analysis .field select {
+  min-width: 0;
+}
+.smart-cleanup {
+  font-size: 12px;
+}
+@media (max-width: 800px) {
+  .smart-grid,
+  .smart-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .smart-section > :not(.panel-title) {
+    margin: 14px;
+  }
+  .smart-feature {
+    padding: 14px;
+  }
+  .smart-heading h2 {
+    font-size: 18px;
+  }
+  .smart-toolbar > button {
+    flex: 1 1 auto;
+  }
+  .smart-facts div {
+    grid-template-columns: 80px minmax(0, 1fr);
+  }
+}

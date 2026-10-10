@@ -15,3 +15,9 @@ jobs:
       - run: pytest -q
       - run: npm ci && npm run build
         working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: node tests/browser/smart-analysis.mjs
+        env:
+          AIRDROP_QA_PYTHON: python
+          AIRDROP_QA_OUTPUT: ${{ runner.temp }}/airdrop-smart-browser

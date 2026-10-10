@@ -8,6 +8,7 @@ from backend.db import get_db
 from backend.models import *
 from backend.queue import enqueue,retry,locked_db
 from packages.protocol import Manifest
+from backend.storage import artifact_lock
 
 router=APIRouter(tags=['执行中心'],dependencies=[Depends(admin)])
 
@@ -18,26 +19,49 @@ class TaskBody(BaseModel):
     name:str=Field(min_length=1,max_length=200)
     batch_size:int=Field(default=100,ge=1,le=1000)
     max_retries:int=Field(default=0,ge=0,le=3)
+    script_feature_id:str|None=Field(default=None,max_length=32)
+    feature_parameters:dict=Field(default_factory=dict)
+    wallet_input:dict|None=None
 
 
 @router.post('/tasks')
 def create_task(body:TaskBody,db:Session=Depends(get_db),user:User=Depends(admin)):
+    with artifact_lock():
+        return _create_task(body,db,user)
+
+
+def _create_task(body,db,user):
     p=db.get(Project,body.project_id);v=db.get(ScriptVersion,body.script_version_id)
     if not p or not v:raise HTTPException(404,'项目或脚本版本不存在')
     if not v.manifest:raise HTTPException(422,'须先适配脚本')
     m=Manifest.model_validate(v.manifest)
+    snapshot=None
+    if not body.script_feature_id and db.scalar(select(ScriptFeature.id).where(ScriptFeature.version_id==v.id).limit(1)):
+        raise HTTPException(422,'多功能版本须在智能分析页选择具体已审核功能后创建任务')
+    if body.script_feature_id:
+        from backend.feature_reviews import task_snapshot
+        feature=db.get(ScriptFeature,body.script_feature_id)
+        if not feature:raise HTTPException(404,'功能不存在')
+        if body.wallet_input is not None:
+            from packages.feature_protocol import WalletInput
+            try:wallet_input=WalletInput.model_validate(body.wallet_input).model_dump()
+            except ValueError:raise HTTPException(422,'钱包输入映射无效') from None
+        else:wallet_input=None
+        snapshot=task_snapshot(db,feature,v,body.feature_parameters,wallet_input)
+    elif body.feature_parameters or body.wallet_input:
+        raise HTTPException(422,'功能参数必须绑定已审核功能')
     workflow=None
     if m.execution_mode=='workflow':
         workflow=Workflow(project_id=p.id,name=body.name);db.add(workflow);db.flush()
         for i,entry in enumerate(m.steps):db.add(WorkflowStep(workflow_id=workflow.id,position=i,entrypoint=entry))
-    task=Task(**body.model_dump(),workflow_id=workflow.id if workflow else None);db.add(task);db.flush()
+    task=Task(**body.model_dump(exclude={'feature_parameters','wallet_input'}),feature_config_snapshot=snapshot,workflow_id=workflow.id if workflow else None);db.add(task);db.flush()
     db.add(AuditLog(user_id=user.id,action='task.create',target=task.id));db.commit()
     return {'id':task.id}
 
 
 @router.get('/tasks')
 def tasks(db:Session=Depends(get_db)):
-    return [{k:getattr(t,k) for k in ('id','name','project_id','script_version_id','batch_size','max_retries','enabled')} for t in db.scalars(select(Task))]
+    return [{k:getattr(t,k) for k in ('id','name','project_id','script_version_id','script_feature_id','feature_config_snapshot','batch_size','max_retries','enabled')} for t in db.scalars(select(Task))]
 
 
 @router.post('/tasks/{task_id}/run')
@@ -63,6 +87,7 @@ class RollbackBody(BaseModel):
 @router.put('/tasks/{task_id}/version')
 def rollback(task_id:str,body:RollbackBody,db:Session=Depends(get_db),user:User=Depends(admin)):
     task=db.get(Task,task_id);version=db.get(ScriptVersion,body.script_version_id)
+    if task and task.script_feature_id:raise HTTPException(409,'功能级任务必须按新版本的已审核功能重新创建，不能只切换版本')
     if not task or not version:raise HTTPException(404,'任务或版本不存在')
     old=db.get(ScriptVersion,task.script_version_id)
     if version.package_id!=old.package_id or version.status!='PUBLISHED':raise HTTPException(409,'只能切换到同一脚本包的已发布版本')

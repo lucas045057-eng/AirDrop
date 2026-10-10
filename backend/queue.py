@@ -38,6 +38,8 @@ def enqueue_db(db,task_id,period=None,is_test=False):
         raise ValueError('管理模式未开放脚本执行、自动调度或链上交易')
     task=db.get(Task,task_id)
     if not task or not task.enabled:raise ValueError('任务不存在或已停用')
+    if task.script_feature_id or db.scalar(select(ScriptFeature.id).where(ScriptFeature.version_id==task.script_version_id).limit(1)):
+        raise ValueError('功能级任务只允许资料管理，功能执行协议尚未验收；禁止运行或测试')
     if emergency(db):raise ValueError('Emergency Stop 已启用')
     version=db.get(ScriptVersion,task.script_version_id)
     if not version.manifest:raise ValueError('脚本尚未适配')

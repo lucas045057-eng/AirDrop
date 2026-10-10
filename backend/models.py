@@ -1,6 +1,6 @@
 import time
 import uuid
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from backend.db import Base
 
@@ -158,6 +158,8 @@ class Task(Base):
     id: Mapped[str]=mapped_column(String(32),primary_key=True,default=uid)
     project_id: Mapped[str]=mapped_column(ForeignKey('projects.id'),index=True)
     script_version_id: Mapped[str]=mapped_column(ForeignKey('script_versions.id'))
+    script_feature_id: Mapped[str|None]=mapped_column(ForeignKey('script_features.id'), nullable=True)
+    feature_config_snapshot: Mapped[dict|None]=mapped_column(JSON, nullable=True)
     workflow_id: Mapped[str|None]=mapped_column(ForeignKey('workflows.id'),nullable=True)
     name: Mapped[str]=mapped_column(String(200))
     batch_size: Mapped[int]=mapped_column(Integer,default=100)
@@ -299,3 +301,65 @@ class TransactionIntent(Base):
     state: Mapped[str]=mapped_column(String(30))
     mock_hash: Mapped[str]=mapped_column(String(100))
     created_at: Mapped[float]=mapped_column(Float,default=time.time)
+
+
+class ScriptAnalysisJob(Base):
+    __tablename__ = 'script_analysis_jobs'
+    __table_args__ = (UniqueConstraint('source_version_id', 'request_key'),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    source_version_id: Mapped[str] = mapped_column(ForeignKey('script_versions.id'), index=True)
+    source_artifact_id: Mapped[str] = mapped_column(ForeignKey('artifacts.id'))
+    source_sha256: Mapped[str] = mapped_column(String(64))
+    request_key: Mapped[str] = mapped_column(String(100))
+    operation: Mapped[str] = mapped_column(String(20), default='DISCOVER')
+    status: Mapped[str] = mapped_column(String(40), default='PENDING', index=True)
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    preview_artifact_id: Mapped[str|None] = mapped_column(ForeignKey('artifacts.id'), nullable=True)
+    preview_sha256: Mapped[str|None] = mapped_column(String(64), nullable=True)
+    reviewed_preview_sha256: Mapped[str|None] = mapped_column(String(64), nullable=True)
+    ai_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    lease_token: Mapped[str|None] = mapped_column(String(32), nullable=True)
+    lease_until: Mapped[float|None] = mapped_column(Float, nullable=True, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str] = mapped_column(Text, default='')
+    created_by: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    created_at: Mapped[float] = mapped_column(Float, default=time.time)
+    started_at: Mapped[float|None] = mapped_column(Float, nullable=True)
+    finished_at: Mapped[float|None] = mapped_column(Float, nullable=True)
+
+
+class ScriptTransformationDraft(Base):
+    __tablename__ = 'script_transformation_drafts'
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    job_id: Mapped[str] = mapped_column(ForeignKey('script_analysis_jobs.id'), unique=True)
+    source_version_id: Mapped[str] = mapped_column(ForeignKey('script_versions.id'), index=True)
+    source_artifact_id: Mapped[str] = mapped_column(ForeignKey('artifacts.id'))
+    source_sha256: Mapped[str] = mapped_column(String(64))
+    output_artifact_id: Mapped[str] = mapped_column(ForeignKey('artifacts.id'))
+    diff_artifact_id: Mapped[str] = mapped_column(ForeignKey('artifacts.id'))
+    output_sha256: Mapped[str] = mapped_column(String(64))
+    review_sha256: Mapped[str] = mapped_column(String(64))
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(30), default='REVIEW_REQUIRED')
+    result_version_id: Mapped[str|None] = mapped_column(ForeignKey('script_versions.id'), nullable=True)
+    created_at: Mapped[float] = mapped_column(Float, default=time.time)
+
+
+class ScriptFeature(Base):
+    __tablename__ = 'script_features'
+    __table_args__ = (UniqueConstraint('version_id', 'feature_key'), UniqueConstraint('draft_id', 'feature_key'),
+                     CheckConstraint('(version_id IS NULL) <> (draft_id IS NULL)', name='ck_feature_one_owner'))
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    version_id: Mapped[str|None] = mapped_column(ForeignKey('script_versions.id'), nullable=True, index=True)
+    draft_id: Mapped[str|None] = mapped_column(ForeignKey('script_transformation_drafts.id'), nullable=True, index=True)
+    feature_key: Mapped[str] = mapped_column(String(64))
+    definition: Mapped[dict] = mapped_column(JSON)
+    code_sha256: Mapped[str] = mapped_column(String(64))
+    version_manifest_sha256: Mapped[str|None] = mapped_column(String(64), nullable=True)
+    cipher_sha256: Mapped[str|None] = mapped_column(String(64), nullable=True)
+    approval_sha256: Mapped[str|None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default='REVIEW_REQUIRED')
+    approved_by: Mapped[str|None] = mapped_column(ForeignKey('users.id'), nullable=True)
+    approved_at: Mapped[float|None] = mapped_column(Float, nullable=True)

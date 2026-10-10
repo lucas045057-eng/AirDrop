@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import "./style.css";
+import SmartAnalysis from "./SmartAnalysis";
 type Row = Record<string, any>;
 type FormField = {
   key: string;
@@ -259,7 +260,14 @@ function WalletGroupPicker({
 function App() {
   const [user, setUser] = useState<Row | null>(null),
     [boot, setBoot] = useState(true),
-    [page, setPage] = useState("dashboard"),
+    [page, setPage] = useState(() =>
+      new URLSearchParams(location.hash.slice(1)).has("analysis")
+        ? "scripts"
+        : "dashboard",
+    ),
+    [smartVersionId, setSmartVersionId] = useState(
+      () => new URLSearchParams(location.hash.slice(1)).get("analysis") || "",
+    ),
     [data, setData] = useState<Row>({
       dashboard: {},
       scripts: [],
@@ -1259,7 +1267,23 @@ function App() {
               </Panel>
             </>
           )}
-          {page === "scripts" && (
+          {page === "scripts" &&
+            smartVersionId &&
+            data.scripts.some((s: Row) => s.id === smartVersionId) && (
+              <SmartAnalysis
+                key={smartVersionId}
+                version={data.scripts.find((s: Row) => s.id === smartVersionId)}
+                api={api}
+                projects={data.projects}
+                refresh={load}
+                back={() => {
+                  setSmartVersionId("");
+                  location.hash = "";
+                }}
+                settings={() => setPage("settings")}
+              />
+            )}
+          {page === "scripts" && !smartVersionId && (
             <Panel
               title={`脚本版本 · ${data.scripts.length}`}
               extra={<span className="muted">.py · .zip · .tar.gz</span>}
@@ -1305,6 +1329,17 @@ function App() {
                     title: "操作",
                     render: (s) => (
                       <div className="actions">
+                        <button
+                          onClick={() => {
+                            setSmartVersionId(s.id);
+                            location.hash = new URLSearchParams({
+                              analysis: s.id,
+                            }).toString();
+                          }}
+                        >
+                          <Sparkles size={13} />
+                          智能分析
+                        </button>
                         <button onClick={() => adapt(s)}>
                           <Sparkles size={13} />
                           适配
@@ -1837,7 +1872,37 @@ function App() {
                   columns={[
                     {
                       title: "任务名称",
-                      render: (t) => <strong>{t.name}</strong>,
+                      render: (t) => (
+                        <>
+                          <strong>{t.name}</strong>
+                          {t.feature_config_snapshot && (
+                            <small>
+                              功能：
+                              {t.feature_config_snapshot.feature_name ||
+                                t.feature_config_snapshot.feature_id}
+                            </small>
+                          )}
+                        </>
+                      ),
+                    },
+                    {
+                      title: "功能配置",
+                      render: (t) =>
+                        t.feature_config_snapshot ? (
+                          <button
+                            className="name-button"
+                            onClick={() =>
+                              show(
+                                "功能任务 · " + t.name,
+                                t.feature_config_snapshot,
+                              )
+                            }
+                          >
+                            查看入口与参数
+                          </button>
+                        ) : (
+                          <span className="muted">原单入口任务</span>
+                        ),
                     },
                     {
                       title: "项目",
