@@ -78,10 +78,15 @@ def unpack(filename: str, data: bytes) -> dict[str, bytes]:
                         add(item.filename, item.file_size, stream.read)
         elif filename.lower().endswith(('.tar.gz','.tgz')):
             # Bound gzip expansion before tarfile parses attacker-controlled PAX headers.
+            expanded=io.BytesIO()
             with gzip.GzipFile(fileobj=io.BytesIO(data)) as compressed:
-                expanded=compressed.read(MAX_EXPANDED+1)
-            if len(expanded)>MAX_EXPANDED:raise ValueError('tar.gz 解压后体积超过限制')
-            with tarfile.open(fileobj=io.BytesIO(expanded), mode='r:') as archive:
+                # BufferedReader.read(size) may reserve size bytes even for a tiny
+                # archive. Keep small uploads within the Linux child memory cap.
+                while block:=compressed.read(min(1024*1024,MAX_EXPANDED+1-expanded.tell())):
+                    expanded.write(block)
+                    if expanded.tell()>MAX_EXPANDED:raise ValueError('tar.gz 解压后体积超过限制')
+            expanded.seek(0)
+            with tarfile.open(fileobj=expanded, mode='r:') as archive:
                 count = 0
                 for item in archive:
                     count += 1

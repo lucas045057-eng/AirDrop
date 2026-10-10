@@ -32,3 +32,17 @@ async def test_bad_archive_rejection_keeps_api_alive(logged):
     with pytest.raises(ValueError, match='路径'):
         await run_child('upload', {'filename': 'hostile.zip'}, zipped({'../bad.py': b'pass'}))
     assert logged.get('/api/health').status_code == 200
+
+
+async def test_small_tar_upload_with_production_memory_limit(logged):
+    import io
+    import tarfile
+    source=b'def main(): return 1\nif __name__=="__main__": main()\n'
+    stream=io.BytesIO()
+    with tarfile.open(fileobj=stream,mode='w:gz') as archive:
+        info=tarfile.TarInfo('main.py');info.size=len(source)
+        archive.addfile(info,io.BytesIO(source))
+    result,metrics=await run_child('upload',{'filename':'small.tar.gz'},stream.getvalue(),memory_mib=96,timeout=30)
+    assert result['files']==1 and result['analysis']['entrypoints'][0]['path']=='main.py'
+    assert metrics['uploaded_code_executed'] is False
+    assert logged.get('/api/health').status_code==200
