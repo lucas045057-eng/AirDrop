@@ -233,6 +233,10 @@ def command_run(args):
                 if host != '127.0.0.1':
                     results[item] = 'BLOCKED_TIMEOUT'
                     continue
+                # Port 9 is the default fixture probe; keep its fake firewall result host-independent.
+                if int(port or 80) == 9:
+                    results[item] = 'BLOCKED_TIMEOUT'
+                    continue
                 if int(port or 80) == 1:
                     results[item] = 'CONNECTION_REFUSED'
                     continue
