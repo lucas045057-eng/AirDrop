@@ -35,14 +35,19 @@ with Session.begin() as db:
     db.execute(insert(legacy).values(id='task',project_id='project',script_version_id='version',name='old-task',batch_size=100,max_retries=0,enabled=True))
 ''')
     with sqlite3.connect(path) as db:
-        snapshots={table:db.execute('SELECT * FROM '+table).fetchall() for table in ['users','wallets','wallet_secrets','script_versions','artifacts']}
+        # 只比较迁移前已存在的列：新增列带默认值，属于预期的结构演进。
+        snapshots={table:([row[1] for row in db.execute('PRAGMA table_info('+table+')')],db.execute('SELECT * FROM '+table).fetchall())
+                   for table in ['users','wallets','wallet_secrets','script_versions','artifacts']}
         artifact_path=db.execute('SELECT path FROM artifacts').fetchone()[0]
     before=Path(artifact_path).read_bytes()
     run('-m','alembic','upgrade','head')
     with sqlite3.connect(path) as db:
-        for table,rows in snapshots.items(): assert db.execute('SELECT * FROM '+table).fetchall()==rows
+        for table,(columns,rows) in snapshots.items(): assert db.execute('SELECT '+','.join(columns)+' FROM '+table).fetchall()==rows
         assert db.execute('SELECT script_feature_id,feature_config_snapshot FROM tasks').fetchone()==(None,None)
+        assert db.execute('SELECT execution_backend FROM tasks').fetchone()==('legacy_mock',)
+        assert db.execute('SELECT runtime_hints FROM script_versions').fetchone()==(None,)
         assert db.execute('SELECT COUNT(*) FROM script_features').fetchone()[0]==0
+        assert {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}>={'runtime_builds','project_accounts','project_script_states','account_import_drafts','execution_log_segments'}
         assert db.execute('PRAGMA foreign_key_check').fetchall()==[]
     assert Path(artifact_path).read_bytes()==before
     run('-c', '''

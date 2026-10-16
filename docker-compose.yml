@@ -20,6 +20,7 @@ services:
       AIRDROP_DATABASE_URL: sqlite:////app/data/airdrop.db
       AIRDROP_MASTER_KEY_FILE: /run/secrets/master.key
       AIRDROP_RUNNER_DIR: /bus
+      AIRDROP_NATIVE_EXECUTION_ENABLED: "false"
     volumes:
       - app-data:/app/data
       - service-secrets:/run/secrets:ro
@@ -44,6 +45,7 @@ services:
       AIRDROP_MASTER_KEY_FILE: /run/secrets/master.key
       AIRDROP_RUNNER_DIR: /bus
       AIRDROP_WORKER_ID: worker-1
+      AIRDROP_NATIVE_EXECUTION_ENABLED: "false"
     volumes:
       - app-data:/app/data
       - runner-bus:/bus

@@ -23,6 +23,9 @@ class AdapterWorker:
         self.provider_factory, self.worker_id = provider_factory, worker_id
 
     async def run_once(self):
+        # 依赖环境构建与静态分析共用单并发 Worker：同一时刻只推进一件事。
+        if await asyncio.to_thread(run_pending_build, self.worker_id):
+            return True
         claimed = await asyncio.to_thread(claim, self.worker_id)
         if not claimed:
             return False
@@ -139,9 +142,15 @@ class AdapterWorker:
                     output_artifact_id=artifacts['output'].id, diff_artifact_id=artifacts['diff'].id,
                     output_sha256=artifacts['output'].sha256, review_sha256=review_sha, summary={**output['summary'], 'analysis': output['analysis']})
                 db.add(draft); db.flush()
+                source_version = db.get(ScriptVersion, job.source_version_id)
+                hints = dict(source_version.runtime_hints or {})
+                from adapters.native import draft_spec
                 for definition in output['summary']['features']:
+                    # A reviewed manual runtime definition wins over the rule-based draft.
+                    spec = draft_spec(definition, report, hints.get(definition['feature_id']), source_version.analysis)
                     db.add(ScriptFeature(draft_id=draft.id, feature_key=definition['feature_id'], definition=definition,
-                                         code_sha256=draft.output_sha256, status=definition['automation_status']))
+                                         code_sha256=draft.output_sha256, status=definition['automation_status'],
+                                         runtime_spec=spec, runtime_status='DRAFT'))
                 job.result = {**report, 'draft_id': draft.id, 'validation_resources': validation_metrics}
                 job.status = 'REVIEW_REQUIRED'; job.finished_at = time.time(); job.lease_token = None; job.lease_until = None
                 db.add(AuditLog(user_id=job.created_by, action='analysis.draft.create', target=draft.id, detail={'output_sha256': draft.output_sha256}))
@@ -161,6 +170,15 @@ class AdapterWorker:
                        '模型请求或分析失败（' + type(exc).__name__ + '），原版本保留')
             await asyncio.to_thread(update, job_id, token, 'FAILED', error=message[:1000])
         return True
+
+
+def run_pending_build(worker_id):
+    from backend.runtime_builds import claim_build, run_build
+    build_id = claim_build(worker_id)
+    if not build_id:
+        return False
+    run_build(build_id)
+    return True
 
 
 async def main():

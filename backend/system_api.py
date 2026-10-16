@@ -27,7 +27,13 @@ def dashboard(db:Session=Depends(get_db)):
 @router.get('/settings')
 def settings_view(db:Session=Depends(get_db)):
     ai=db.get(SystemSetting,'ai');security=db.get(SystemSetting,'security');execution=db.get(SystemSetting,'execution')
-    return {'capabilities':{'execution_enabled':app_settings.execution_enabled,'real_signing_enabled':False,'mode':'management'},'ai':{'provider':'compatible','url':ai.value['url'],'model':ai.value['model'],'key_configured':True} if ai else {'provider':'rules','key_configured':False},'security':security.value if security else {'emergency_stop':False,'real_signing_enabled':False},'execution':execution.value if execution else {'global_concurrency':app_settings.global_concurrency},'backup':{'wallets':db.scalar(select(func.count()).select_from(Wallet)),'verified':db.scalar(select(func.count()).select_from(Wallet).where(Wallet.backup_verified==True))},'notifications':{'channel':'dashboard','external_delivery_implemented':False},'workers':[{'id':w.id,'status':'ONLINE' if time.time()-w.heartbeat_at<30 else 'OFFLINE','heartbeat_at':w.heartbeat_at} for w in db.scalars(select(Worker))]}
+    from backend.runtime_builds import controller_status
+    native=controller_status() if app_settings.native_execution_enabled else {'available':False,'online':False,
+        'reason':'原生执行开关未启用（AIRDROP_NATIVE_EXECUTION_ENABLED）'}
+    return {'capabilities':{'execution_enabled':app_settings.execution_enabled,'real_signing_enabled':False,'mode':'management',
+                            'native_execution_enabled':app_settings.native_execution_enabled,
+                            'native_available':bool(native.get('available')),'native_reason':str(native.get('reason') or '')},
+            'ai':{'provider':'compatible','url':ai.value['url'],'model':ai.value['model'],'key_configured':True} if ai else {'provider':'rules','key_configured':False},'security':security.value if security else {'emergency_stop':False,'real_signing_enabled':False},'execution':execution.value if execution else {'global_concurrency':app_settings.global_concurrency},'native':native,'backup':{'wallets':db.scalar(select(func.count()).select_from(Wallet)),'verified':db.scalar(select(func.count()).select_from(Wallet).where(Wallet.backup_verified==True))},'notifications':{'channel':'dashboard','external_delivery_implemented':False},'workers':[{'id':w.id,'status':'ONLINE' if time.time()-w.heartbeat_at<30 else 'OFFLINE','heartbeat_at':w.heartbeat_at} for w in db.scalars(select(Worker))]}
 
 
 class AIConfig(BaseModel):
@@ -55,11 +61,13 @@ def security(body:SecurityConfig,user:User=Depends(admin)):
         obj=db.get(SystemSetting,'security') or SystemSetting(key='security')
         obj.value={'emergency_stop':body.emergency_stop,'real_signing_enabled':False};db.add(obj)
         if body.emergency_stop:
-            for e in db.scalars(select(Execution).where(Execution.status.in_(['RUNNING','QUEUED']))):
+            for e in db.scalars(select(Execution).where(Execution.status.in_(['RUNNING','QUEUED','PREPARING']))):
                 e.cancel_requested=True
                 if e.status=='QUEUED':
                     e.status='CANCELLED';e.finished_at=time.time()
                     for r in db.scalars(select(WalletTaskResult).where(WalletTaskResult.execution_id==e.id,WalletTaskResult.status=='QUEUED')):r.status='CANCELLED'
+                elif e.execution_backend=='native':
+                    e.status='STOPPING'
         db.add(AuditLog(user_id=user.id,action='security.emergency_stop',target='system',detail={'enabled':body.emergency_stop}))
     return {'ok':True}
 

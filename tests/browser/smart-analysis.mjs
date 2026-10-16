@@ -125,6 +125,18 @@ try {
   check('Rejected feature cannot be saved',await page.getByRole('button',{name:'将已批准功能保存为新版本'}).isDisabled());
   const scripts=await (await page.request.get(base+'/api/scripts')).json();
   check('Failures do not add partial script versions',scripts.length===5);
+  await upload('browser_manual_adapt','def checkin(): return "original"\nif __name__=="__main__": checkin()\n');
+  await page.getByRole('button',{name:'返回脚本中心'}).click();
+  await page.locator('tbody tr').filter({hasText:'browser_manual_adapt'}).getByRole('button',{name:'人工适配',exact:true}).click();
+  await page.locator('input[type="file"]').setInputFiles({name:'browser_manual_adapt.py',mimeType:'text/x-python',buffer:Buffer.from('def checkin(): return "adapted"\nif __name__=="__main__": checkin()\n')});
+  await page.getByLabel(/我已审阅修改文件/).check();
+  await page.getByRole('button',{name:'上传并扫描新版本'}).click();
+  await page.getByRole('heading',{name:/智能分析 · browser_manual_adapt\.py · v2/}).waitFor({timeout:15000});
+  await page.getByText('人工适配 Diff · 源版本',{exact:false}).waitFor({timeout:10000});
+  const manualDiff=await page.locator('details.panel.smart-section pre.smart-pre').innerText();
+  check('Manual adaptation shows source diff and opens scanned package version',manualDiff.includes('original')&&manualDiff.includes('adapted'));
+  await page.getByRole('button',{name:'返回脚本中心'}).click();
+  check('Original and manual adaptation versions both remain',await page.locator('tbody tr').filter({hasText:'browser_manual_adapt'}).count()===2);
   const health=await (await page.request.get(base+'/api/health')).json();
   check('Management execution remains closed',health.execution_enabled===false);
   check('Browser has no runtime errors',pageErrors.length===0);

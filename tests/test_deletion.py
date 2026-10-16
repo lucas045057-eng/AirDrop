@@ -3,11 +3,20 @@ from pathlib import Path
 import time
 import pytest
 from sqlalchemy import select
+from backend.config import settings
 from backend.db import Session
-from backend.models import (Artifact, AuditLog, Execution, ExecutionReceipt, PointSnapshot,
-    ScheduleOccurrence, ScriptVersion, Wallet, WalletLock, WalletSecret, WalletTaskResult,
-    Workflow, WorkflowStep)
-from backend.queue import claim, enqueue, finalize, locked_db
+from backend.models import (Artifact, AuditLog, Execution, ExecutionAttempt, ExecutionLogSegment, ExecutionReceipt,
+    PointSnapshot, ProjectAccount, ProjectScriptState, ProjectWalletBinding, ScheduleOccurrence, ScriptVersion,
+    Wallet, WalletLock, WalletSecret, WalletTaskResult, Workflow, WorkflowStep)
+from backend.queue import claim, claim_native, enqueue, enqueue_native, finalize, finalize_native, locked_db
+from backend import runtime_logs
+from tests.test_native_queue import native_setup  # noqa: F401（native_setup 以夹具形式导入）
+
+
+@pytest.fixture
+def native_enabled(monkeypatch):
+    monkeypatch.setattr(settings, 'native_execution_enabled', True)
+    return True
 
 
 def erase(client, path):
@@ -176,3 +185,54 @@ def test_enqueue_and_task_delete_are_atomic(logged, setup):
         assert response.status_code == 409
         with Session() as db:assert db.get(Execution, execution[0]) is not None
     else:assert response.status_code == 200
+
+
+def test_native_execution_deletion_removes_logs_snapshot_and_state_lock(logged, native_setup, native_enabled):
+    """原生运行的加密工件（输入快照、日志分段）随执行记录一起消失。"""
+    identity, _ = enqueue_native(native_setup['tasks']['first'], 'manual-key-0001')
+    attempt = claim_native(settings.worker_id)[1]
+    with Session.begin() as db:
+        runtime_logs.append_text(db, attempt, 0, '原生运行日志：开始\n')
+        runtime_logs.append_text(db, attempt, 1, '原生运行日志：结束\n')
+    assert finalize_native(identity, attempt, {'status': '', 'exit_code': 0, 'log_bytes': 40,
+                                               'log_status': 'COMPLETE'}) is True
+    with locked_db() as db:
+        execution = db.get(Execution, identity)
+        assert execution.status == 'COMPLETED'
+        snapshot_id = execution.input_snapshot_artifact_id
+        snapshot_path = Path(db.get(Artifact, snapshot_id).path)
+        segment_paths = [Path(db.get(Artifact, segment.artifact_id).path)
+                         for segment in runtime_logs.segments_of(db, attempt)]
+        # 人工核查前的残留锁必须在删除时一并清除，不能留下悬空引用。
+        state = db.scalar(select(ProjectScriptState).where(ProjectScriptState.project_id == native_setup['projects']['first']))
+        state.locked_execution_id = identity
+    result = erase(logged, '/executions/' + identity)
+    assert result.status_code == 200
+    assert result.json()['removed']['artifacts'] >= 3 and result.json()['artifact_files_pending'] == 0
+    with Session() as db:
+        assert db.get(Execution, identity) is None
+        assert not list(db.scalars(select(ExecutionAttempt).where(ExecutionAttempt.execution_id == identity)))
+        assert not list(db.scalars(select(ExecutionLogSegment)))
+        assert db.get(Artifact, snapshot_id) is None
+        for path in segment_paths:
+            assert db.scalar(select(Artifact).where(Artifact.path == str(path))) is None
+        state = db.scalar(select(ProjectScriptState).where(ProjectScriptState.project_id == native_setup['projects']['first']))
+        assert state.locked_execution_id is None
+    assert not snapshot_path.exists() and all(not path.exists() for path in segment_paths)
+
+
+def test_wallet_with_project_account_data_cannot_be_deleted(logged, native_setup):
+    """项目资料（ProjectAccount）也是引用：删钱包前必须先清掉它。"""
+    wallet_id = native_setup['wallets'][0]
+    with locked_db() as db:
+        for binding in db.scalars(select(ProjectWalletBinding).where(ProjectWalletBinding.wallet_id == wallet_id)):
+            db.delete(binding)
+        db.add(ProjectAccount(project_id=native_setup['projects']['first'], package_id=native_setup['packages']['first'],
+                              wallet_id=wallet_id, public_config={'note': '项目资料'}))
+    blocked = erase(logged, '/wallets/' + wallet_id)
+    assert blocked.status_code == 409 and '项目资料' in blocked.json()['detail']
+    with Session() as db:
+        assert db.get(Wallet, wallet_id) is not None
+    with locked_db() as db:
+        db.delete(db.scalar(select(ProjectAccount).where(ProjectAccount.wallet_id == wallet_id)))
+    assert erase(logged, '/wallets/' + wallet_id).status_code == 200

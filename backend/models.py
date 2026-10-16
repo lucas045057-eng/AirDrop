@@ -62,6 +62,7 @@ class ScriptVersion(Base):
     status: Mapped[str] = mapped_column(String(30), default='UPLOADED')
     analysis: Mapped[dict] = mapped_column(JSON)
     manifest: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    runtime_hints: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     tested_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[float] = mapped_column(Float, default=time.time)
 
@@ -160,6 +161,8 @@ class Task(Base):
     script_version_id: Mapped[str]=mapped_column(ForeignKey('script_versions.id'))
     script_feature_id: Mapped[str|None]=mapped_column(ForeignKey('script_features.id'), nullable=True)
     feature_config_snapshot: Mapped[dict|None]=mapped_column(JSON, nullable=True)
+    execution_backend: Mapped[str]=mapped_column(String(20),default='legacy_mock')
+    wallet_selection: Mapped[dict|None]=mapped_column(JSON, nullable=True)
     workflow_id: Mapped[str|None]=mapped_column(ForeignKey('workflows.id'),nullable=True)
     name: Mapped[str]=mapped_column(String(200))
     batch_size: Mapped[int]=mapped_column(Integer,default=100)
@@ -192,6 +195,14 @@ class Execution(Base):
     status: Mapped[str]=mapped_column(String(30),default='QUEUED',index=True)
     is_test: Mapped[bool]=mapped_column(Boolean,default=False)
     cancel_requested: Mapped[bool]=mapped_column(Boolean,default=False)
+    execution_backend: Mapped[str]=mapped_column(String(20),default='legacy_mock')
+    request_key: Mapped[str|None]=mapped_column(String(100),nullable=True)
+    input_snapshot_artifact_id: Mapped[str|None]=mapped_column(ForeignKey('artifacts.id'),nullable=True)
+    state_review_artifact_id: Mapped[str|None]=mapped_column(ForeignKey('artifacts.id'),nullable=True)
+    runtime_snapshot: Mapped[dict|None]=mapped_column(JSON,nullable=True)
+    state_generation: Mapped[int|None]=mapped_column(Integer,nullable=True)
+    state_status: Mapped[str]=mapped_column(String(30),default='')
+    log_status: Mapped[str]=mapped_column(String(30),default='')
     worker_id: Mapped[str|None]=mapped_column(String(100),nullable=True)
     lease_until: Mapped[float|None]=mapped_column(Float,nullable=True,index=True)
     available_at: Mapped[float]=mapped_column(Float,default=time.time)
@@ -218,9 +229,97 @@ class ExecutionAttempt(Base):
     number: Mapped[int]=mapped_column(Integer)
     status: Mapped[str]=mapped_column(String(30),default='RUNNING')
     process_exit_code: Mapped[int|None]=mapped_column(Integer,nullable=True)
+    runner_handle: Mapped[str|None]=mapped_column(String(200),nullable=True)
+    lease_generation: Mapped[int]=mapped_column(Integer,default=0)
+    log_bytes: Mapped[int]=mapped_column(Integer,default=0)
+    raw_output_bytes: Mapped[int]=mapped_column(Integer,default=0,server_default='0')
     log: Mapped[str]=mapped_column(Text,default='')
     started_at: Mapped[float]=mapped_column(Float,default=time.time)
     finished_at: Mapped[float|None]=mapped_column(Float,nullable=True)
+
+
+class RuntimeBuild(Base):
+    """Resolved dependency environment; one image per environment key."""
+    __tablename__='runtime_builds'
+    __table_args__=(UniqueConstraint('environment_key',),)
+    id: Mapped[str]=mapped_column(String(32),primary_key=True,default=uid)
+    package_id: Mapped[str]=mapped_column(ForeignKey('script_packages.id'),index=True)
+    environment_key: Mapped[str]=mapped_column(String(200))
+    python_version: Mapped[str]=mapped_column(String(20),default='3.12')
+    base_image: Mapped[str]=mapped_column(String(200),default='')
+    dependency_files: Mapped[list]=mapped_column(JSON,default=list)
+    lock_artifact_id: Mapped[str|None]=mapped_column(ForeignKey('artifacts.id'),nullable=True)
+    lock_sha256: Mapped[str|None]=mapped_column(String(64),nullable=True)
+    image_id: Mapped[str|None]=mapped_column(String(200),nullable=True)
+    status: Mapped[str]=mapped_column(String(30),default='PENDING',index=True)
+    log: Mapped[str]=mapped_column(Text,default='')
+    error: Mapped[str]=mapped_column(Text,default='')
+    created_at: Mapped[float]=mapped_column(Float,default=time.time)
+    started_at: Mapped[float|None]=mapped_column(Float,nullable=True)
+    finished_at: Mapped[float|None]=mapped_column(Float,nullable=True)
+
+
+class ProjectAccount(Base):
+    """Per project, per script package, per wallet account data."""
+    __tablename__='project_accounts'
+    __table_args__=(UniqueConstraint('project_id','package_id','wallet_id'),)
+    id: Mapped[str]=mapped_column(String(32),primary_key=True,default=uid)
+    project_id: Mapped[str]=mapped_column(ForeignKey('projects.id',ondelete='CASCADE'),index=True)
+    package_id: Mapped[str]=mapped_column(ForeignKey('script_packages.id',ondelete='CASCADE'),index=True)
+    wallet_id: Mapped[str]=mapped_column(ForeignKey('wallets.id'),index=True)
+    public_config: Mapped[dict]=mapped_column(JSON,default=dict)
+    encrypted_config: Mapped[str]=mapped_column(Text,default='')
+    revision: Mapped[int]=mapped_column(Integer,default=1)
+    source: Mapped[str]=mapped_column(String(200),default='')
+    created_at: Mapped[float]=mapped_column(Float,default=time.time)
+    updated_at: Mapped[float]=mapped_column(Float,default=time.time)
+
+
+class ProjectScriptState(Base):
+    """State space: project + script package + state schema version."""
+    __tablename__='project_script_states'
+    __table_args__=(UniqueConstraint('project_id','package_id','state_schema_version'),)
+    id: Mapped[str]=mapped_column(String(32),primary_key=True,default=uid)
+    project_id: Mapped[str]=mapped_column(ForeignKey('projects.id',ondelete='CASCADE'),index=True)
+    package_id: Mapped[str]=mapped_column(ForeignKey('script_packages.id',ondelete='CASCADE'),index=True)
+    state_schema_version: Mapped[int]=mapped_column(Integer,default=1)
+    generation: Mapped[int]=mapped_column(Integer,default=0)
+    artifact_id: Mapped[str|None]=mapped_column(ForeignKey('artifacts.id'),nullable=True)
+    artifact_sha256: Mapped[str|None]=mapped_column(String(64),nullable=True)
+    locked_execution_id: Mapped[str|None]=mapped_column(ForeignKey('executions.id'),nullable=True)
+    updated_at: Mapped[float]=mapped_column(Float,default=time.time)
+
+
+class AccountImportDraft(Base):
+    """Encrypted account import with a bounded preview and an idempotent commit."""
+    __tablename__='account_import_drafts'
+    id: Mapped[str]=mapped_column(String(32),primary_key=True,default=uid)
+    project_id: Mapped[str]=mapped_column(ForeignKey('projects.id',ondelete='CASCADE'),index=True)
+    package_id: Mapped[str]=mapped_column(ForeignKey('script_packages.id',ondelete='CASCADE'),index=True)
+    artifact_id: Mapped[str]=mapped_column(ForeignKey('artifacts.id'))
+    file_sha256: Mapped[str]=mapped_column(String(64))
+    filename: Mapped[str]=mapped_column(String(200))
+    field_mapping: Mapped[dict]=mapped_column(JSON,default=dict)
+    preview: Mapped[dict]=mapped_column(JSON,default=dict)
+    preview_sha256: Mapped[str]=mapped_column(String(64))
+    created_by: Mapped[str]=mapped_column(ForeignKey('users.id'))
+    expires_at: Mapped[float]=mapped_column(Float)
+    consumed_at: Mapped[float|None]=mapped_column(Float,nullable=True)
+    result: Mapped[dict|None]=mapped_column(JSON,nullable=True)
+    created_at: Mapped[float]=mapped_column(Float,default=time.time)
+
+
+class ExecutionLogSegment(Base):
+    __tablename__='execution_log_segments'
+    __table_args__=(UniqueConstraint('attempt_id','seq'),)
+    id: Mapped[str]=mapped_column(String(32),primary_key=True,default=uid)
+    attempt_id: Mapped[str]=mapped_column(ForeignKey('execution_attempts.id',ondelete='CASCADE'),index=True)
+    seq: Mapped[int]=mapped_column(Integer)
+    artifact_id: Mapped[str]=mapped_column(ForeignKey('artifacts.id'))
+    artifact_sha256: Mapped[str]=mapped_column(String(64))
+    offset_bytes: Mapped[int]=mapped_column(Integer,default=0)
+    size_bytes: Mapped[int]=mapped_column(Integer,default=0)
+    created_at: Mapped[float]=mapped_column(Float,default=time.time)
 
 
 class WalletTaskResult(Base):
@@ -363,3 +462,9 @@ class ScriptFeature(Base):
     status: Mapped[str] = mapped_column(String(30), default='REVIEW_REQUIRED')
     approved_by: Mapped[str|None] = mapped_column(ForeignKey('users.id'), nullable=True)
     approved_at: Mapped[float|None] = mapped_column(Float, nullable=True)
+    runtime_spec: Mapped[dict|None] = mapped_column(JSON, nullable=True)
+    runtime_status: Mapped[str] = mapped_column(String(30), default='DRAFT')
+    runtime_review_sha256: Mapped[str|None] = mapped_column(String(64), nullable=True)
+    runtime_approved_by: Mapped[str|None] = mapped_column(ForeignKey('users.id'), nullable=True)
+    runtime_approved_at: Mapped[float|None] = mapped_column(Float, nullable=True)
+    runtime_build_id: Mapped[str|None] = mapped_column(ForeignKey('runtime_builds.id'), nullable=True)

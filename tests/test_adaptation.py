@@ -33,3 +33,29 @@ def test_version_approval_and_publish_gate(logged):
     assert logged.get(f"/api/scripts/{result['id']}/diff").json()['diff']
     assert logged.post(f"/api/scripts/{result['id']}/publish").status_code==409
     assert logged.post(f"/api/scripts/{result['id']}/approve").json()['status']=='APPROVED'
+
+
+def test_manual_adaptation_upload_creates_scanned_version_in_same_package(logged):
+    original = logged.post('/api/scripts/upload', files={'file': ('project.zip', zipped({
+        'src/run.py': b'def run():\n    return "original"\n',
+        'src/config.py': b'RETRY = 2\n',
+    }))}).json()
+    response = logged.post(
+        f"/api/scripts/{original['id']}/manual-adaptations",
+        files={'file': ('manual-fix.zip', zipped({
+            'src/run.py': b'def run():\n    return "adapted"\n',
+        }))},
+        data={'note': 'Preserve the existing flow', 'scan': 'true'},
+    )
+    assert response.status_code == 200, response.text
+    adapted = response.json()
+    assert adapted['package_id'] == original['package_id']
+    assert adapted['version'] == original['version'] + 1
+    assert adapted['status'] == 'REVIEW_REQUIRED'
+    assert adapted['analysis']['manual_adaptation']['source_version_id'] == original['id']
+    assert adapted['analysis_job']['source_version_id'] == adapted['id']
+    assert logged.get(f"/api/scripts/{adapted['id']}/diff").json()['diff']
+    new_source = logged.get(f"/api/scripts/{adapted['id']}/source").json()
+    old_source = logged.get(f"/api/scripts/{original['id']}/source").json()
+    assert 'adapted' in new_source['src/run.py']
+    assert 'original' in old_source['src/run.py']

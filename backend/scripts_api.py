@@ -2,7 +2,7 @@ import hashlib
 import asyncio
 import threading
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from backend.auth import admin
 from backend.db import get_db
@@ -37,33 +37,50 @@ def version_dict(db, version):
 
 @router.post('/upload')
 async def upload(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(admin)):
+    data = await read_upload(file)
+    prepared, analysis = await prepare_source(file.filename or '', data)
+    with artifact_lock():
+        package = ScriptPackage(name=(file.filename or 'project')[:200])
+        db.add(package)
+        db.flush()
+        return store_version(db, package, prepared, analysis, user.id)
+
+
+async def read_upload(file: UploadFile) -> bytes:
+    data = await file.read(MAX_UPLOAD + 1)
+    if len(data) > MAX_UPLOAD:
+        raise HTTPException(422, '上传文件超过 10 MiB')
+    return data
+
+
+async def prepare_source(filename: str, data: bytes):
+    """Bounded, isolated parsing of an uploaded package; shared by every upload path."""
     if not _upload_slot.acquire(blocking=False):
         raise HTTPException(429, '另一个源码上传正在处理，请稍后重试')
     try:
-        data = await file.read(MAX_UPLOAD+1)
-        if len(data) > MAX_UPLOAD:
-            raise HTTPException(422, '上传文件超过 10 MiB')
         from worker.process_limits import run_child
-        prepared, resources = await run_child('upload', {'filename': file.filename or ''}, data, memory_mib=96, timeout=30)
+        prepared, resources = await run_child('upload', {'filename': filename or ''}, data, memory_mib=96, timeout=30)
     except (ValueError, TimeoutError) as exc:
         raise HTTPException(422, str(exc)) from exc
     finally:
         _upload_slot.release()
-    analysis = {**prepared['analysis'], 'upload_resources': resources}
-    with artifact_lock():
-        original = Artifact(**prepared['original'], kind='original')
-        source = Artifact(**prepared['sources'], kind='sources')
-        db.add_all([original, source]); db.flush()
-        package = ScriptPackage(name=(file.filename or 'project')[:200])
-        db.add(package)
-        db.flush()
-        version = ScriptVersion(package_id=package.id,version=1,original_artifact_id=original.id,source_artifact_id=source.id,analysis=analysis)
-        db.add(version)
-        db.flush()
-        db.add(AuditLog(user_id=user.id,action='script.upload',target=version.id,detail={'sha256':original.sha256,'files':prepared['files']}))
-        db.commit()
-        return version_dict(db,version)
+    return prepared, {**prepared['analysis'], 'upload_resources': resources}
 
+
+def store_version(db, package, prepared, analysis, user_id, status='UPLOADED'):
+    """Append a new version to an existing script package; the original stays archived."""
+    original = Artifact(**prepared['original'], kind='original')
+    source = Artifact(**prepared['sources'], kind='sources')
+    db.add_all([original, source]); db.flush()
+    number = (db.scalar(select(func.max(ScriptVersion.version)).where(ScriptVersion.package_id == package.id)) or 0) + 1
+    version = ScriptVersion(package_id=package.id, version=number, original_artifact_id=original.id,
+                            source_artifact_id=source.id, analysis=analysis, status=status)
+    db.add(version)
+    db.flush()
+    db.add(AuditLog(user_id=user_id, action='script.upload', target=version.id,
+                    detail={'sha256': original.sha256, 'files': prepared['files'], 'version': number}))
+    db.commit()
+    return version_dict(db, version)
 
 @router.get('')
 def list_scripts(db: Session = Depends(get_db)):

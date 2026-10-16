@@ -1,0 +1,359 @@
+/* 原生运行相关界面：日志、执行详情、运行环境与项目账号资料。 */
+.exec-detail-body {
+  padding: 20px 23px 24px;
+}
+.exec-detail-body h3 {
+  margin: 20px 0 10px;
+  color: #304464;
+}
+.exec-detail-body h3:first-child {
+  margin-top: 0;
+}
+.exec-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.exec-chips span {
+  font-size: 10px;
+  color: #7182a0;
+  background: #f4f7fd;
+  border: 1px solid #e8eefb;
+  border-radius: 20px;
+  padding: 5px 11px;
+}
+.wallet-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  background: #fffaf0;
+  border-color: #f6e6c8;
+  color: #a3803f;
+}
+.wallet-warning svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.results-scroll {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.attempt-block {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.attempt-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #fbfcfe;
+  font-size: 11px;
+  color: #7d8ba6;
+}
+.attempt-head strong {
+  font-size: 12px;
+  color: #304464;
+}
+.exec-frozen {
+  border-top: 1px solid #f0f2f7;
+  margin-top: 18px;
+  padding-top: 14px;
+}
+.exec-frozen summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #576980;
+  padding: 4px 0 10px;
+}
+.exec-frozen-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.exec-frozen-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #f8faff;
+  border: 1px solid #eef2fa;
+  border-radius: 7px;
+  padding: 11px 13px;
+  font-size: 11px;
+}
+.exec-frozen-grid span {
+  color: #8a96aa;
+  font-size: 10px;
+}
+.exec-frozen-grid code {
+  overflow-wrap: anywhere;
+  color: #3d5273;
+}
+
+/* 日志查看器 */
+.exec-log {
+  padding: 14px 16px 16px;
+}
+.exec-log.compact {
+  background: #fbfcfe;
+}
+.exec-log-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.exec-log-bar button {
+  font-size: 11px;
+  color: #5c7295;
+  border: 1px solid #e2e8f4;
+  border-radius: 7px;
+  padding: 7px 11px;
+  background: white;
+}
+.exec-log-bar button:hover:not(:disabled) {
+  border-color: #c3d0ea;
+  color: var(--blue);
+}
+.exec-log-bar button[aria-pressed="true"] {
+  background: #eff3ff;
+  border-color: #d3ddfa;
+  color: var(--blue);
+}
+.exec-log-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 180px;
+  border: 1px solid #e2e8f4;
+  border-radius: 7px;
+  padding: 0 10px;
+  background: white;
+  color: #9aa6bb;
+}
+.exec-log-search input {
+  border: 0;
+  padding: 8px 0;
+  box-shadow: none;
+  background: transparent;
+}
+.exec-log-search input:focus {
+  box-shadow: none;
+}
+.exec-log-box {
+  max-height: 460px;
+  min-height: 140px;
+  overflow: auto;
+  background: #101b30;
+  color: #cdd9ef;
+  border: 1px solid #101b30;
+  border-radius: 8px;
+  line-height: 1.65;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.exec-log.compact .exec-log-box {
+  max-height: 300px;
+}
+.exec-log-box mark {
+  background: #ffe58a;
+  color: #3a2c00;
+  border-radius: 2px;
+}
+.exec-log-note {
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+.exec-log-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 11px;
+}
+.exec-log-foot .muted {
+  font-size: 10px;
+}
+.exec-modal {
+  width: min(560px, 95vw);
+}
+
+/* 运行环境面板 */
+.runtime-feature {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 14px 16px 16px;
+  margin-bottom: 16px;
+}
+.runtime-feature-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.runtime-feature-title strong {
+  font-size: 13px;
+  color: #304464;
+}
+.runtime-config {
+  font-size: 12px;
+}
+.runtime-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.runtime-head .muted {
+  font-size: 10px;
+}
+.runtime-flags {
+  display: grid;
+  gap: 6px;
+  background: #f8faff;
+  border: 1px solid #eef2fa;
+  border-radius: 7px;
+  padding: 12px 14px;
+  font-size: 11px;
+  color: #6b7c96;
+  margin-bottom: 14px;
+}
+.runtime-json {
+  min-height: 220px;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.runtime-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 14px;
+}
+.runtime-actions .checkbox {
+  margin: 0;
+  font-size: 11px;
+}
+.runtime-digest {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 10px;
+  color: #8a96aa;
+  margin-bottom: 14px;
+}
+.runtime-digest code {
+  color: #3d5273;
+  overflow-wrap: anywhere;
+}
+.runtime-task {
+  border-top: 1px solid #f0f2f7;
+  padding-top: 12px;
+  margin-top: 6px;
+}
+.runtime-task summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #3d5273;
+  padding-bottom: 10px;
+}
+.wallet-picks {
+  max-height: 220px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 12px;
+}
+.wallet-picks .check-row {
+  font-size: 11px;
+  margin: 8px 0;
+}
+
+/* 项目资料导入 */
+.account-import {
+  width: min(920px, 95vw);
+}
+.account-import-body {
+  padding: 22px 24px 26px;
+}
+.account-import-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+}
+.account-import-grid .field:nth-child(3),
+.account-import-grid .field:nth-child(4) {
+  grid-column: span 1;
+}
+.account-import-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.account-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.account-summary .muted {
+  font-size: 10px;
+}
+.account-entries {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 10px;
+  max-height: 330px;
+  overflow: auto;
+  padding: 2px;
+}
+.account-entry {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 13px;
+  font-size: 11px;
+}
+.account-entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.account-values {
+  display: grid;
+  gap: 4px;
+  color: #6b7c96;
+}
+.account-conflict {
+  margin-top: 9px;
+  border-top: 1px dashed #f0d7d7;
+  padding-top: 9px;
+  color: #a97070;
+}
+.account-decision {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+}
+.account-decision .checkbox {
+  margin: 0;
+  font-size: 11px;
+}

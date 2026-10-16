@@ -1,0 +1,64 @@
+# 原生运行的可选叠加文件：控制器 + Worker 原生路径。
+# 用法：docker compose -f docker-compose.yml -f deploy/compose.adapter.yml -f deploy/compose.native.yml --profile smart-adapter up -d
+# 前置条件：
+#   1. 宿主上执行过 deploy/native-runtime-firewall.sh（拦截敏感转发目标，并阻断该网桥访问宿主所有 INPUT 端口）；
+#   2. 宿主目录 /dev/shm/airdrop-runs 已存在，且与容器内路径完全一致（bind 挂载同一路径）；
+#   3. AIRDROP_NATIVE_RUNTIME_BASE_IMAGE 指向已固定的基础镜像摘要。
+services:
+  controller:
+    build:
+      context: .
+      dockerfile: deploy/controller.Dockerfile
+      args:
+        AIRDROP_DOCKER_CLI_IMAGE: ${AIRDROP_DOCKER_CLI_IMAGE:-docker:27.5.1-cli}
+    image: airdrop-v2-controller:local
+    command: ["python", "-m", "runner.controller_service"]
+    user: "0:0"
+    environment:
+      AIRDROP_EXECUTION_ENABLED: "false"
+      AIRDROP_NATIVE_EXECUTION_ENABLED: "false"
+      AIRDROP_NATIVE_SOCKET_PATH: /sockets/native.sock
+      AIRDROP_NATIVE_SOCKET_GID: "10001"
+      AIRDROP_NATIVE_RUN_ROOT: /dev/shm/airdrop-runs
+      AIRDROP_NATIVE_DOCKER_HOST: unix:///var/run/docker.sock
+      AIRDROP_NATIVE_NETWORK: airdrop-native
+    volumes:
+      # 控制器需要访问 Docker 才能创建运行容器；这是它唯一的特权来源。
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 与 Worker 共享的本地 socket 目录。
+      - native-sockets:/sockets
+      # 与宿主同路径的 tmpfs 运行目录：容器只挂载其中本次运行自己的子目录。
+      - /dev/shm/airdrop-runs:/dev/shm/airdrop-runs
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 0.5
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "from runner import controller; assert controller.online(), 'controller offline'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  worker:
+    environment:
+      # Worker 打开原生执行开关并接入控制器；它拿不到 Docker socket。
+      AIRDROP_NATIVE_EXECUTION_ENABLED: "true"
+      AIRDROP_NATIVE_SOCKET_PATH: /sockets/native.sock
+      AIRDROP_NATIVE_GLOBAL_CONCURRENCY: "1"
+      AIRDROP_NATIVE_CONCURRENCY: "1"
+    volumes:
+      - native-sockets:/sockets
+    depends_on:
+      controller: {condition: service_started}
+  backend:
+    environment:
+      AIRDROP_NATIVE_EXECUTION_ENABLED: "true"
+      AIRDROP_NATIVE_SOCKET_PATH: /sockets/native.sock
+    volumes:
+      - native-sockets:/sockets
+volumes:
+  native-sockets:

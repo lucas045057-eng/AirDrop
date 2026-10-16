@@ -8,9 +8,10 @@ from backend.analysis_jobs import digest, require_source
 from backend.models import Artifact, AuditLog, ScriptAdaptation, ScriptAnalysisJob, ScriptFeature, ScriptTransformationDraft, ScriptVersion
 from backend.queue import locked_db
 from backend.scripts_api import version_dict
-from backend.storage import artifact_fingerprint, artifact_lock
-from packages.feature_protocol import FeatureDefinition
+from backend.storage import artifact_fingerprint, artifact_lock, decode_files, read_blob
+from packages.feature_protocol import CAPABILITY_REASONS, FeatureDefinition
 from packages.protocol import Manifest
+from packages.runtime_protocol import NativeRuntimeSpec, runtime_digest, validate_against_files
 
 
 def approval_digest(feature):
@@ -20,7 +21,134 @@ def approval_digest(feature):
 def feature_dict(feature):
     return {'id': feature.id, 'version_id': feature.version_id, 'draft_id': feature.draft_id,
             'definition': feature.definition, 'status': feature.status, 'code_sha256': feature.code_sha256,
-            'review_sha256': approval_digest(feature), 'approved_at': feature.approved_at}
+            'review_sha256': approval_digest(feature), 'approved_at': feature.approved_at,
+            'runtime_spec': feature.runtime_spec, 'runtime_status': feature.runtime_status,
+            'runtime_approved_at': feature.runtime_approved_at, 'runtime_build_id': feature.runtime_build_id}
+
+
+def feature_files(db, feature):
+    """Decoded code artifact behind a draft feature or a saved version feature."""
+    if feature.draft_id:
+        draft = db.get(ScriptTransformationDraft, feature.draft_id)
+        artifact = db.get(Artifact, draft.output_artifact_id)
+    else:
+        version = db.get(ScriptVersion, feature.version_id)
+        artifact = db.get(Artifact, version.source_artifact_id)
+    with artifact_lock():
+        return decode_files(read_blob(artifact.path, artifact.sha256))
+
+
+def runtime_view(db, feature):
+    """Runtime definition plus the exact digest a reviewer must confirm."""
+    from backend.config import settings
+    spec = NativeRuntimeSpec.model_validate(feature.runtime_spec) if feature.runtime_spec else None
+    view = {'id': feature.id, 'version_id': feature.version_id, 'draft_id': feature.draft_id,
+            'runtime_spec': feature.runtime_spec, 'runtime_status': feature.runtime_status,
+            'runtime_approved_at': feature.runtime_approved_at, 'runtime_build_id': feature.runtime_build_id,
+            'review_sha256': feature.runtime_review_sha256, 'approved_sha256': feature.runtime_review_sha256,
+            'capabilities': list(spec.capabilities) if spec else [],
+            'readiness': spec.readiness() if spec else ['尚未生成运行定义'],
+            'execution_enabled': settings.native_execution_enabled, 'environment': None}
+    if feature.runtime_build_id:
+        from backend.runtime_builds import build_view
+        from backend.models import RuntimeBuild
+        build = db.get(RuntimeBuild, feature.runtime_build_id)
+        if build is not None:
+            view['environment'] = build_view(db, build)
+    if spec is not None:
+        files = feature_files(db, feature)
+        view['review_sha256'] = runtime_digest_for(feature, spec, files)
+        view['parameters_schema'] = spec.schema()
+        view['entrypoint_present'] = spec.entrypoint in files
+    return view
+
+
+def runtime_digest_for(feature, spec, files):
+    referenced = [spec.entrypoint, *spec.dependency_files]
+    referenced += [binding.target for binding in spec.configuration_bindings if binding.destination == 'file_field']
+    generated = {name: hashlib.sha256(files[name]).hexdigest() for name in sorted(set(referenced)) if name in files}
+    return runtime_digest(spec.model_dump(mode='json'), code_sha256=feature.code_sha256,
+                          definition_digest=approval_digest(feature), generated_files=generated)
+
+
+def parse_runtime(payload):
+    """运行定义必须符合协议；非法输入返回 422 而不是未处理异常。"""
+    try:
+        return NativeRuntimeSpec.model_validate(payload)
+    except ValueError as exc:
+        errors = exc.errors() if hasattr(exc, 'errors') else []
+        message = str(errors[0].get('msg', '')).removeprefix('Value error, ') if errors else ''
+        raise HTTPException(422, '运行定义无效：' + (message or '请检查字段与取值')) from None
+
+
+def structural_blockers(definition):
+    """Unresolved structure still blocks running; declared capabilities do not."""
+    return [reason for reason in definition.blocking_reasons if reason not in CAPABILITY_REASONS]
+
+
+def require_native_approvable(feature, definition):
+    """The analysis approval of a capability-bearing feature needs a declared runtime."""
+    blockers = structural_blockers(definition)
+    if blockers:
+        raise HTTPException(409, '该功能仍有未解决的结构问题：' + '；'.join(blockers[:3]))
+    if not definition.entrypoint:
+        raise HTTPException(409, '该功能没有可运行的入口，须人工适配后重新扫描')
+    capability_only = bool(definition.blocking_reasons) and all(
+        reason in CAPABILITY_REASONS for reason in definition.blocking_reasons
+    )
+    if definition.automation_status != 'REVIEW_REQUIRED' and not capability_only:
+        raise HTTPException(409, '该功能的结构尚未解决，须人工处理后重新适配')
+    if definition.risk_level == 'high' or capability_only:
+        spec = NativeRuntimeSpec.model_validate(feature.runtime_spec) if feature.runtime_spec else None
+        if spec is None or not spec.capabilities:
+            raise HTTPException(409, '该功能涉及凭证、认证、网络或资金操作，须先在运行定义中明确声明能力，再做运行审核')
+
+
+def set_runtime(feature_id, payload, user_id):
+    """Store a runtime definition edit; any previous runtime approval becomes stale."""
+    spec = parse_runtime(payload)
+    with artifact_lock(), locked_db() as db:
+        feature = db.get(ScriptFeature, feature_id)
+        if feature is None:
+            raise HTTPException(404, '功能不存在')
+        try:
+            validate_against_files(spec, feature_files(db, feature))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        feature.runtime_spec = spec.model_dump(mode='json')
+        feature.runtime_status = 'DRAFT'
+        feature.runtime_review_sha256 = None
+        feature.runtime_approved_by = None
+        feature.runtime_approved_at = None
+        db.add(AuditLog(user_id=user_id, action='runtime.definition.update', target=feature.id,
+                        detail={'entrypoint': spec.entrypoint, 'capabilities': list(spec.capabilities)}))
+        return runtime_view(db, feature)
+
+
+def review_runtime(feature_id, reviewed_sha256, user_id):
+    with artifact_lock(), locked_db() as db:
+        feature = db.get(ScriptFeature, feature_id)
+        if feature is None or not feature.runtime_spec:
+            raise HTTPException(404, '该功能尚未生成运行定义')
+        spec = parse_runtime(feature.runtime_spec)
+        notes = spec.readiness()
+        if notes:
+            raise HTTPException(409, '运行定义仍包含未解决项：' + '；'.join(notes[:3]))
+        files = feature_files(db, feature)
+        validate_against_files(spec, files)
+        current = runtime_digest_for(feature, spec, files)
+        if current != reviewed_sha256:
+            raise HTTPException(409, '运行定义或代码摘要已改变，请重新审核')
+        definition = FeatureDefinition.model_validate(feature.definition)
+        if structural_blockers(definition) or not definition.entrypoint:
+            raise HTTPException(409, '功能结构尚未解决，不能通过运行审核')
+        feature.runtime_review_sha256 = current
+        feature.runtime_approved_by = user_id
+        feature.runtime_approved_at = time.time()
+        feature.runtime_status = 'APPROVED'
+        db.add(AuditLog(user_id=user_id, action='runtime.review.approve', target=feature.id,
+                        detail={'runtime_sha256': current, 'entrypoint': spec.entrypoint}))
+        return runtime_view(db, feature)
 
 
 def verify_draft(db, draft):
@@ -62,8 +190,8 @@ def review(feature_id, action, reviewed_sha256, user_id):
             raise HTTPException(409, '功能配置或代码摘要已改变，请重新审核')
         definition = FeatureDefinition.model_validate(feature.definition)
         if action == 'APPROVED':
-            if definition.blocking_reasons or definition.risk_level == 'high' or not definition.entrypoint or definition.automation_status != 'REVIEW_REQUIRED':
-                raise HTTPException(409, '该功能存在高风险、未知结构或未解决交互，须人工处理后重新适配')
+            # Structure problems still block; declared capabilities are covered by the runtime review.
+            require_native_approvable(feature, definition)
             feature.approval_sha256 = reviewed_sha256; feature.approved_by = user_id; feature.approved_at = time.time()
         else:
             feature.approval_sha256 = None; feature.approved_by = None; feature.approved_at = None
@@ -104,10 +232,20 @@ def save(draft_id, feature_ids, review_sha256, user_id):
             source_artifact_id=draft.output_artifact_id, analysis=draft.summary['analysis'], manifest=manifest.model_dump(), status='APPROVED')
         db.add(result); db.flush()
         for feature in features:
-            db.add(ScriptFeature(version_id=result.id, feature_key=feature.feature_key, definition=feature.definition,
+            saved_feature = ScriptFeature(version_id=result.id, feature_key=feature.feature_key, definition=feature.definition,
                 version_manifest_sha256=digest(result.manifest), cipher_sha256=draft.summary['output_cipher_sha256'],
                 code_sha256=feature.code_sha256, approval_sha256=feature.approval_sha256, status='APPROVED',
-                approved_by=feature.approved_by, approved_at=feature.approved_at))
+                approved_by=feature.approved_by, approved_at=feature.approved_at)
+            db.add(saved_feature); db.flush()
+            if feature.runtime_spec:
+                saved_feature.runtime_spec = feature.runtime_spec
+                spec = NativeRuntimeSpec.model_validate(feature.runtime_spec)
+                if feature.runtime_approved_by and not spec.readiness():
+                    # Same code, definition and runtime definition: the approval still applies.
+                    saved_feature.runtime_review_sha256 = runtime_digest_for(saved_feature, spec, feature_files(db, saved_feature))
+                    saved_feature.runtime_approved_by = feature.runtime_approved_by
+                    saved_feature.runtime_approved_at = feature.runtime_approved_at
+                    saved_feature.runtime_status = 'APPROVED'
         db.add(ScriptAdaptation(source_version_id=source.id, result_version_id=result.id,
             provider='compatible' if job.config.get('use_ai') else 'rules', diff='功能级 Diff 在智能分析详情中分页展示。',
             plan={'smart_job_id': job.id, 'draft_id': draft.id, 'feature_keys': [f.feature_key for f in features]}, approved_by=user_id))
@@ -128,6 +266,14 @@ def task_snapshot(db, feature, version, values, wallet_input):
     if not intact or source.sha256 != feature.code_sha256 or feature.approval_sha256 != approval_digest(feature) or digest(version.manifest) != feature.version_manifest_sha256:
         raise HTTPException(409, '功能代码或配置变动导致审核失效')
     definition = FeatureDefinition.model_validate(feature.definition)
+    if feature.runtime_spec:
+        runtime = NativeRuntimeSpec.model_validate(feature.runtime_spec)
+        runtime_parameters = {parameter.name: parameter for parameter in runtime.parameters}
+        mismatched = [parameter.name for parameter in definition.parameters
+                      if parameter.name in runtime_parameters
+                      and parameter.sensitive != runtime_parameters[parameter.name].sensitive]
+        if mismatched:
+            raise HTTPException(409, '参数敏感属性必须与已审核运行定义一致：' + ', '.join(sorted(mismatched)))
     schema = definition.input_schema
     if set(values) - set(schema['properties']):
         raise HTTPException(422, '包含未知功能参数')

@@ -9,7 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from backend.auth import admin
 from backend.config import settings
 from backend.models import (
-    Artifact, AuditLog, Execution, ExecutionAttempt, ExecutionReceipt, GasBudget,
+    AccountImportDraft, Artifact, AuditLog, Execution, ExecutionAttempt, ExecutionLogSegment,
+    ExecutionReceipt, GasBudget, ProjectAccount, ProjectScriptState, RuntimeBuild,
     PointSnapshot, Project, ProjectGroupBinding, ProjectWalletBinding, Schedule,
     ScheduleOccurrence, ScriptAdaptation, ScriptPackage, ScriptVersion, SystemSetting,
     Task, TransactionIntent, TransactionPolicy, User, Wallet, WalletGroup,
@@ -19,7 +20,7 @@ from backend.queue import locked_db
 from backend.storage import artifact_lock
 
 router = APIRouter(tags=['永久删除'], dependencies=[Depends(admin)])
-TERMINAL = {'SUCCESS', 'PARTIAL_SUCCESS', 'FAILED', 'TIMEOUT', 'CANCELLED'}
+TERMINAL = {'SUCCESS', 'PARTIAL_SUCCESS', 'FAILED', 'TIMEOUT', 'CANCELLED', 'COMPLETED'}
 
 
 class Confirmation(BaseModel):
@@ -33,6 +34,7 @@ class WalletBatchConfirmation(Confirmation):
 WALLET_REFERENCES = (
     ('项目绑定', ProjectWalletBinding), ('执行结果', WalletTaskResult),
     ('积分历史', PointSnapshot), ('执行锁', WalletLock), ('交易凭据', TransactionIntent),
+    ('项目资料', ProjectAccount),
 )
 
 
@@ -63,7 +65,36 @@ def artifact_referenced(db, identity):
         (ScriptVersion, or_(ScriptVersion.original_artifact_id == identity, ScriptVersion.source_artifact_id == identity)),
         (ScriptAnalysisJob, or_(ScriptAnalysisJob.source_artifact_id == identity, ScriptAnalysisJob.preview_artifact_id == identity)),
         (ScriptTransformationDraft, or_(ScriptTransformationDraft.source_artifact_id == identity,
-            ScriptTransformationDraft.output_artifact_id == identity, ScriptTransformationDraft.diff_artifact_id == identity))])
+            ScriptTransformationDraft.output_artifact_id == identity, ScriptTransformationDraft.diff_artifact_id == identity)),
+        # 原生运行的输入快照、状态快照、日志分段与依赖锁都是加密工件，删除前必须逐一核对引用。
+        (Execution, Execution.input_snapshot_artifact_id == identity),
+        (ProjectScriptState, ProjectScriptState.artifact_id == identity),
+        (AccountImportDraft, AccountImportDraft.artifact_id == identity),
+        (ExecutionLogSegment, ExecutionLogSegment.artifact_id == identity),
+        (RuntimeBuild, RuntimeBuild.lock_artifact_id == identity)])
+
+
+def drop_artifacts(db, identities, removed, files):
+    """删除不再被引用的加密工件；仍被引用的保留，交给后续清理。"""
+    pending = set()
+    for identity in {value for value in identities if value} - pending:
+        if artifact_referenced(db, identity):
+            continue
+        artifact = db.get(Artifact, identity)
+        if artifact is None:
+            continue
+        path = safe_artifact_path(artifact)
+        db.delete(artifact)
+        db.flush()
+        removed['artifacts'] = removed.get('artifacts', 0) + 1
+        if not count(db, Artifact, Artifact.path == str(path)):
+            files.append(path)
+    return files
+
+
+def clear_state_locks(db, execution_id):
+    for state in db.scalars(select(ProjectScriptState).where(ProjectScriptState.locked_execution_id == execution_id)):
+        state.locked_execution_id = None
 
 
 def remove(kind, identity, user):
@@ -112,8 +143,16 @@ def remove(kind, identity, user):
                                ('工作流', Workflow, Workflow.project_id == identity),
                                ('积分历史', PointSnapshot, PointSnapshot.project_id == identity),
                                ('交易凭据', TransactionIntent, TransactionIntent.project_id == identity)])
+                    artifacts = {draft.artifact_id for draft in db.scalars(
+                        select(AccountImportDraft).where(AccountImportDraft.project_id == identity))}
+                    artifacts.update(state.artifact_id for state in db.scalars(
+                        select(ProjectScriptState).where(ProjectScriptState.project_id == identity)))
                     for model in (ProjectGroupBinding, ProjectWalletBinding, TransactionPolicy, GasBudget):
                         remove_rows(db, removed, model, model.project_id == identity)
+                    for model in (ProjectScriptState, ProjectAccount, AccountImportDraft):
+                        remove_rows(db, removed, model, model.project_id == identity)
+                    db.flush()
+                    drop_artifacts(db, artifacts, removed, files)
                     db.delete(obj)
                 elif kind == 'task':
                     guard(db, [('执行历史', Execution, Execution.task_id == identity),
@@ -141,9 +180,20 @@ def remove(kind, identity, user):
                     for receipt in db.scalars(select(ExecutionReceipt).where(ExecutionReceipt.execution_id == identity)):
                         receipt.execution_id = None
                     db.flush()
+                    attempt_ids = list(db.scalars(select(ExecutionAttempt.id).where(ExecutionAttempt.execution_id == identity)))
+                    artifacts = {obj.input_snapshot_artifact_id}
+                    if attempt_ids:
+                        segments = list(db.scalars(select(ExecutionLogSegment).where(
+                            ExecutionLogSegment.attempt_id.in_(attempt_ids))))
+                        artifacts.update(segment.artifact_id for segment in segments)
+                        remove_rows(db, removed, ExecutionLogSegment,
+                                    ExecutionLogSegment.attempt_id.in_(attempt_ids))
+                    clear_state_locks(db, identity)
                     for model in (PointSnapshot, WalletTaskResult, ExecutionAttempt):
                         remove_rows(db, removed, model, model.execution_id == identity)
                     db.delete(obj)
+                    db.flush()
+                    drop_artifacts(db, artifacts, removed, files)
                 elif kind == 'ai':db.delete(obj)
                 removed[models[kind].__tablename__] = 1
                 db.add(AuditLog(user_id=user.id, action=kind + '.delete', target=identity,

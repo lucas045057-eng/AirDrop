@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Check, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowLeft, Check, FileUp, RefreshCw, Sparkles } from "lucide-react";
+import RuntimeConfig from "./RuntimeConfig";
 import "./smart-analysis.css";
 
 type Row = Record<string, any>;
@@ -10,7 +11,11 @@ type Props = {
   refresh: () => Promise<any>;
   back: () => void;
   settings: () => void;
+  openVersion: (versionId: string, jobId: string) => void;
 };
+const CAPABILITY_REASONS = new Set([
+  "调用链涉及凭证、认证、代理、安全检查或资金操作；禁止自动应用",
+]);
 const names: Row = {
   PENDING: "等待分析",
   SCANNING: "扫描源码",
@@ -64,6 +69,10 @@ function Feature({
   children?: React.ReactNode;
 }) {
   const f = feature.definition || feature;
+  const blockers: string[] = f.blocking_reasons || [];
+  const structuralBlockers = blockers.filter(
+    (reason) => !CAPABILITY_REASONS.has(reason),
+  );
   return (
     <article className="smart-feature" data-feature={f.feature_id}>
       <div className="smart-feature-title">
@@ -111,16 +120,18 @@ function Feature({
           <dd>{f.entrypoint || "待生成或人工处理"}</dd>
         </div>
       </dl>
-      {!!f.blocking_reasons.length && (
+      {!!blockers.length && (
         <div className="smart-warning">
           <strong>阻塞原因</strong>
           <ul>
-            {f.blocking_reasons.map((reason: string) => (
+            {blockers.map((reason: string) => (
               <li key={reason}>{reason}</li>
             ))}
           </ul>
           <p>
-            请修改原项目的交互或安全结构后重新上传；平台不会自动确认验证码或资金操作。
+            {structuralBlockers.length
+              ? "结构问题仍需人工处理并重新扫描；平台不会自动确认验证码或资金操作。"
+              : "这是运行能力声明项。请先提交明确的运行定义；平台不会自动确认验证码或资金操作。"}
           </p>
         </div>
       )}
@@ -192,6 +203,7 @@ export default function SmartAnalysis({
   refresh,
   back,
   settings,
+  openVersion,
 }: Props) {
   const [jobId, setJobId] = useState(initialJob),
     [job, setJob] = useState<Row | null>(null);
@@ -221,6 +233,24 @@ export default function SmartAnalysis({
   const [batchSize, setBatchSize] = useState(100),
     [retries, setRetries] = useState(0);
   const [pollEpoch, setPollEpoch] = useState(0);
+  const [manualFile, setManualFile] = useState<File | null>(null);
+  const [manualNote, setManualNote] = useState("");
+  const [manualConfirmed, setManualConfirmed] = useState(false);
+  const [manualDiff, setManualDiff] = useState<Row | null>(null);
+
+  useEffect(() => {
+    if (!version.analysis?.manual_adaptation) {
+      setManualDiff(null);
+      return;
+    }
+    let alive = true;
+    api(`/scripts/${version.id}/diff`)
+      .then((value) => alive && setManualDiff(value))
+      .catch((e) => alive && setError(e.message));
+    return () => {
+      alive = false;
+    };
+  }, [version.id]);
 
   async function act(action: () => Promise<any>, message = "") {
     setBusy(true);
@@ -332,6 +362,23 @@ export default function SmartAnalysis({
     });
     chooseJob(row.id);
     await reloadHistory();
+  }
+  async function uploadManualAdaptation() {
+    if (!manualFile) throw new Error("请选择人工修改后的 .py 或 ZIP 文件。");
+    if (!manualConfirmed) throw new Error("请先确认已审阅修改内容并保留原版。");
+    const body = new FormData();
+    body.append("file", manualFile);
+    body.append("note", manualNote.trim());
+    body.append("scan", "true");
+    const result = await api(
+      `/scripts/${version.id}/manual-adaptations`,
+      "POST",
+      body,
+    );
+    if (!result.analysis_job?.id)
+      throw new Error("新版本已创建，但结构扫描未能启动；请在新版本页重新开始扫描。");
+    await refresh();
+    openVersion(result.id, result.analysis_job.id);
   }
   async function loadDiff(file = diffFile, offset = diffOffset) {
     if (!draft) return;
@@ -446,6 +493,64 @@ export default function SmartAnalysis({
           <Check size={16} />
           {notice}
         </div>
+      )}
+      {version.analysis?.manual_adaptation && (
+        <details className="panel smart-section" open>
+          <summary>人工适配 Diff · 源版本 {version.analysis.manual_adaptation.source_version_id}</summary>
+          <p>{version.analysis.manual_adaptation.note || "未填写适配说明"}</p>
+          <p>修改文件：{version.analysis.manual_adaptation.files?.join("、")}</p>
+          <pre className="smart-pre">{manualDiff?.diff || "正在读取 Diff…"}</pre>
+        </details>
+      )}
+      {section(
+        "人工适配 · 上传修改后的源码",
+        <form
+          className="smart-form-grid"
+          onSubmit={(e) => {
+            e.preventDefault();
+            act(
+              uploadManualAdaptation,
+              "已为同一脚本包创建新版本并启动结构扫描。",
+            );
+          }}
+        >
+          <label className="field">
+            <span>修改后的 Python 文件或 ZIP（最多 10 MiB）</span>
+            <input
+              type="file"
+              accept=".py,.zip"
+              required
+              onChange={(e) => setManualFile(e.target.files?.[0] || null)}
+            />
+            <small>
+              单个 .py 适用于包根目录的同名文件；需要覆盖子目录文件或提交多个文件时，请用 ZIP 并保留原相对路径。仅接受 Python 源码和 requirements 依赖声明。
+            </small>
+          </label>
+          <label className="field">
+            <span>适配说明</span>
+            <textarea
+              maxLength={1000}
+              value={manualNote}
+              onChange={(e) => setManualNote(e.target.value)}
+              placeholder="说明保留了哪些业务流程、参数或状态逻辑"
+            />
+          </label>
+          <label className="smart-check">
+            <input
+              type="checkbox"
+              checked={manualConfirmed}
+              onChange={(e) => setManualConfirmed(e.target.checked)}
+            />
+            我已审阅修改文件、确认没有真实凭据，并同意保留原版、创建同包新版本和启动扫描
+          </label>
+          <button
+            className="primary"
+            type="submit"
+            disabled={busy || !manualFile || !manualConfirmed}
+          >
+            <FileUp size={15} /> 上传并扫描新版本
+          </button>
+        </form>,
       )}
       {section(
         "1 · 分析原始源码",
@@ -765,36 +870,73 @@ export default function SmartAnalysis({
               </label>
             )}
             <div className="smart-grid">
-              {draft.features.map((f: Row) => (
-                <Feature key={f.id} feature={f}>
-                  {!draft.result_version_id && (
-                    <div className="smart-toolbar">
-                      <button
-                        className="primary"
-                        disabled={
-                          busy ||
-                          !checkedDiff ||
-                          !!f.definition.blocking_reasons.length ||
-                          !f.definition.entrypoint ||
-                          f.status === "APPROVED"
-                        }
-                        onClick={() => act(() => review(f, "APPROVED"))}
-                      >
-                        批准功能 {f.definition.name}
-                      </button>
-                      <button
-                        className="secondary"
-                        disabled={
-                          busy || !checkedDiff || f.status === "REJECTED"
-                        }
-                        onClick={() => act(() => review(f, "REJECTED"))}
-                      >
-                        拒绝此功能
-                      </button>
-                    </div>
-                  )}
-                </Feature>
-              ))}
+              {draft.features.map((f: Row) => {
+                const definition = f.definition;
+                const blockers: string[] = definition.blocking_reasons || [];
+                const capabilityOnly =
+                  blockers.length > 0 &&
+                  blockers.every((reason) => CAPABILITY_REASONS.has(reason));
+                const structuralBlockers = blockers.filter(
+                  (reason) => !CAPABILITY_REASONS.has(reason),
+                );
+                const hasCapabilities = !!f.runtime_spec?.capabilities?.length;
+                const needsCapabilities =
+                  definition.risk_level === "high" || capabilityOnly;
+                const statusReviewable =
+                  definition.automation_status === "REVIEW_REQUIRED" ||
+                  capabilityOnly;
+                return (
+                  <Feature key={f.id} feature={f}>
+                    {!draft.result_version_id &&
+                      !structuralBlockers.length &&
+                      needsCapabilities &&
+                      !hasCapabilities && (
+                        <details className="runtime-review-setup" open>
+                          <summary>声明此功能需要的运行能力</summary>
+                          <p>
+                            先在运行定义中明确网络、所选钱包私钥或浏览器辅助能力。保存定义不会启动脚本。
+                          </p>
+                          <RuntimeConfig
+                            feature={f}
+                            api={api}
+                            compact
+                            reviewOnly
+                            refresh={async () => {
+                              if (jobId) await reloadJob();
+                              await refresh();
+                            }}
+                          />
+                        </details>
+                      )}
+                    {!draft.result_version_id && (
+                      <div className="smart-toolbar">
+                        <button
+                          className="primary"
+                          disabled={
+                            busy ||
+                            !checkedDiff ||
+                            structuralBlockers.length > 0 ||
+                            !definition.entrypoint ||
+                            !statusReviewable ||
+                            (needsCapabilities && !hasCapabilities) ||
+                            f.status === "APPROVED"
+                          }
+                          onClick={() => act(() => review(f, "APPROVED"))}
+                        >
+                          批准功能 {definition.name}
+                        </button>
+                        <button
+                          className="secondary"
+                          disabled={busy || !checkedDiff || f.status === "REJECTED"}
+                          onClick={() => act(() => review(f, "REJECTED"))}
+                        >
+                          拒绝此功能
+                        </button>
+                      </div>
+                    )}
+                  </Feature>
+                );
+              })}
             </div>
             {!draft.result_version_id && (
               <button

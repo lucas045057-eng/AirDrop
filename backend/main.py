@@ -13,6 +13,8 @@ from backend import adaptation_api
 from backend import execution_api,schedules_api,system_api
 from backend import deletion_api
 from backend import analysis_api
+from backend import runtime_api
+from backend import accounts_api
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -39,6 +41,8 @@ app.include_router(schedules_api.router, prefix="/api")
 app.include_router(system_api.router, prefix="/api")
 app.include_router(deletion_api.router, prefix="/api")
 app.include_router(analysis_api.router, prefix="/api")
+app.include_router(runtime_api.router, prefix="/api")
+app.include_router(accounts_api.router, prefix="/api")
 
 
 @app.exception_handler(RequestValidationError)

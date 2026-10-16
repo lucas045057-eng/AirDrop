@@ -6,6 +6,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from backend.uploads import safe_path
 
+# Reasons that describe a declared capability rather than an unresolved structure.
+# The native runtime review must cover them explicitly instead of blocking them forever.
+CAPABILITY_REASONS = ('调用链涉及凭证、认证、代理、安全检查或资金操作；禁止自动应用',)
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra='forbid')

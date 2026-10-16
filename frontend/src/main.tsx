@@ -26,7 +26,12 @@ import {
   X,
 } from "lucide-react";
 import "./style.css";
+import "./runtime.css";
+import AccountImport from "./AccountImport";
+import ExecutionDetails, { canRunNative, newRequestKey } from "./ExecutionDetails";
+import { setLogCsrf } from "./ExecutionLog";
 import SmartAnalysis from "./SmartAnalysis";
+import RuntimeConfig from "./RuntimeConfig";
 type Row = Record<string, any>;
 type FormField = {
   key: string;
@@ -278,6 +283,7 @@ function App() {
       executions: [],
       schedules: [],
       settings: {},
+      runtime: {},
       audit: [],
     }),
     [spec, setSpec] = useState<DialogSpec | null>(null),
@@ -287,9 +293,9 @@ function App() {
     [busy, setBusy] = useState(false),
     [query, setQuery] = useState(""),
     [focused, setFocused] = useState<string | null>(null),
-    [detail, setDetail] = useState<Row | null>(null),
     [groupWallets, setGroupWallets] = useState<Row[] | null>(null),
     [activeGroupId, setActiveGroupId] = useState<string | null>(null),
+    [accountProject, setAccountProject] = useState<Row | null>(null),
     [selectedWallets, setSelectedWallets] = useState<Set<string>>(new Set());
   const executionEnabled =
     data.settings.capabilities?.execution_enabled === true;
@@ -324,6 +330,7 @@ function App() {
       executions: "/executions",
       schedules: "/schedules",
       settings: "/settings",
+      runtime: "/runtime/capabilities",
       audit: "/audit",
     };
     const pairs = await Promise.all(
@@ -343,6 +350,7 @@ function App() {
     api("/auth/me")
       .then((v) => {
         csrf = v.csrf;
+        setLogCsrf(v.csrf);
         setUser(v);
       })
       .catch(() => {})
@@ -357,24 +365,22 @@ function App() {
         api("/executions"),
         api("/scripts"),
         api("/settings"),
+        api("/runtime/capabilities"),
       ])
-        .then(([dashboard, executions, scripts, settings]) =>
-          setData((d) => ({ ...d, dashboard, executions, scripts, settings })),
+        .then(([dashboard, executions, scripts, settings, runtime]) =>
+          setData((d) => ({
+            ...d,
+            dashboard,
+            executions,
+            scripts,
+            settings,
+            runtime,
+          })),
         )
         .catch(() => {});
     }, 4000);
     return () => clearInterval(timer);
   }, [user]);
-  useEffect(() => {
-    if (!focused || page !== "executions") return;
-    const update = () =>
-      api("/executions/" + focused)
-        .then(setDetail)
-        .catch((e) => setError(e.message));
-    update();
-    const timer = setInterval(update, 2000);
-    return () => clearInterval(timer);
-  }, [focused, page]);
   useEffect(() => {
     if (!notice) return;
     const t = setTimeout(() => setNotice(""), 7000);
@@ -803,6 +809,48 @@ function App() {
       ),
     });
   }
+  /** 运行环境：运行定义、依赖环境与原生任务配置都集中在这个面板里。 */
+  async function runtimePanel(s: Row) {
+    await act(async () => {
+      const features = await api(`/scripts/${s.id}/features`);
+      if (!features.length) {
+        throw new Error(
+          "该版本还没有已审核功能，请先在智能分析里生成并审核功能，再配置运行环境。",
+        );
+      }
+      open({
+        title: `运行环境 · ${s.name} v${s.version}`,
+        content: (
+          <>
+            <div className="hint">
+              原生运行按功能声明入口、钱包文件与状态文件；分析审核不等于运行审核，准备依赖环境前必须先通过运行审核。
+            </div>
+            {features.map((feature: Row) => (
+              <div className="runtime-feature" key={feature.id}>
+                <div className="runtime-feature-title">
+                  <strong>{feature.definition?.name || feature.feature_key}</strong>
+                  <span className="muted">
+                    {(feature.definition?.entrypoint || "入口待生成") +
+                      " · 运行状态 " +
+                      (feature.runtime_status || "尚无运行定义")}
+                  </span>
+                </div>
+                <RuntimeConfig
+                  feature={feature}
+                  api={api}
+                  projects={data.projects}
+                  wallets={data.wallets}
+                  compact
+                  refresh={load}
+                />
+              </div>
+            ))}
+          </>
+        ),
+      });
+      return true;
+    });
+  }
   const nav = [
     ["dashboard", "总览", LayoutDashboard],
     ["scripts", "脚本中心", FileCode2],
@@ -814,11 +862,30 @@ function App() {
   const title = nav.find((n) => n[0] === page)?.[1] || "总览";
   const run = (t: Row, test = false) =>
     act(async () => {
-      const r = await api(`/tasks/${t.id}/${test ? "test" : "run"}`, "POST");
+      const r = await api(
+        `/tasks/${t.id}/${test ? "test" : "run"}`,
+        "POST",
+        t.execution_backend === "native" && !test
+          ? { request_key: newRequestKey() }
+          : undefined,
+      );
       setPage("executions");
       setFocused(r.execution_id);
       return r;
     }, "已提交独立 Worker 队列");
+  /** 任务按钮状态：原生任务看原生能力，旧任务看管理模式开关；停用必须同时给出原因。 */
+  const runGate = (t: Row) =>
+    t.execution_backend === "native"
+      ? canRunNative(data.runtime, t)
+      : { allowed: executionEnabled, reason: "执行尚未开放" };
+  const testGate = (t: Row) =>
+    t.execution_backend === "native"
+      ? {
+          allowed: false,
+          reason:
+            "原生任务不使用旧模拟测试入口；请直接运行，日志与结果在执行中心查看",
+        }
+      : { allowed: executionEnabled, reason: "执行尚未开放" };
   const executionColumns = [
     {
       title: "任务 / 项目",
@@ -977,7 +1044,6 @@ function App() {
               onClick={() => {
                 setPage(id);
                 setFocused(null);
-                setDetail(null);
               }}
             >
               <Icon size={19} />
@@ -1280,6 +1346,13 @@ function App() {
                   setSmartVersionId("");
                   location.hash = "";
                 }}
+                openVersion={(versionId, jobId) => {
+                  setSmartVersionId(versionId);
+                  location.hash = new URLSearchParams({
+                    analysis: versionId,
+                    job: jobId,
+                  }).toString();
+                }}
                 settings={() => setPage("settings")}
               />
             )}
@@ -1340,9 +1413,32 @@ function App() {
                           <Sparkles size={13} />
                           智能分析
                         </button>
+                        <button
+                          onClick={() => {
+                            setSmartVersionId(s.id);
+                            location.hash = new URLSearchParams({
+                              analysis: s.id,
+                            }).toString();
+                          }}
+                        >
+                          <UploadCloud size={13} />
+                          人工适配
+                        </button>
+                        <button
+                          disabled={busy || !s.feature_count}
+                          title={
+                            s.feature_count
+                              ? "运行定义、依赖环境与原生任务配置"
+                              : "该版本还没有已审核功能"
+                          }
+                          onClick={() => runtimePanel(s)}
+                        >
+                          <Boxes size={13} />
+                          运行环境
+                        </button>
                         <button onClick={() => adapt(s)}>
                           <Sparkles size={13} />
-                          适配
+                          标准化适配
                         </button>
                         <button
                           onClick={() =>
@@ -1762,6 +1858,14 @@ function App() {
           )}
           {page === "projects" && (
             <>
+              {accountProject && (
+                <AccountImport
+                  project={accountProject}
+                  api={api}
+                  onClose={() => setAccountProject(null)}
+                  onChanged={load}
+                />
+              )}
               <div className="project-grid">
                 {data.projects.map((p: Row) => (
                   <section className="panel project-card" key={p.id}>
@@ -1830,6 +1934,9 @@ function App() {
                         }
                       >
                         绑定钱包
+                      </button>
+                      <button onClick={() => setAccountProject(p)}>
+                        项目资料
                       </button>
                       <button className="primary" onClick={() => task(p)}>
                         <Plus size={14} />
@@ -1932,15 +2039,15 @@ function App() {
                       render: (t) => (
                         <div className="actions">
                           <button
-                            disabled={!executionEnabled}
-                            title="执行尚未开放"
+                            disabled={!testGate(t).allowed}
+                            title={testGate(t).reason}
                             onClick={() => run(t, true)}
                           >
                             测试
                           </button>
                           <button
-                            disabled={!executionEnabled}
-                            title="执行尚未开放"
+                            disabled={!runGate(t).allowed}
+                            title={runGate(t).reason}
                             onClick={() => run(t)}
                           >
                             <Play size={13} />
@@ -2044,7 +2151,6 @@ function App() {
                                 () => {
                                   if (focused === e.id) {
                                     setFocused(null);
-                                    setDetail(null);
                                   }
                                 },
                               )
@@ -2067,8 +2173,15 @@ function App() {
                             e.status,
                           ) && (
                             <button
-                              disabled={!executionEnabled}
-                              title="当前管理模式未开放重试"
+                              disabled={
+                                !executionEnabled ||
+                                e.execution_backend === "native"
+                              }
+                              title={
+                                e.execution_backend === "native"
+                                  ? "原生运行不使用逐钱包补跑；请核对结果后按新请求键再次运行"
+                                  : "当前管理模式未开放重试"
+                              }
                               onClick={() =>
                                 act(() =>
                                   api(`/executions/${e.id}/retry`, "POST"),
@@ -2127,55 +2240,17 @@ function App() {
                   ]}
                 />
               </Panel>
-              {focused && detail && (
-                <Panel
-                  title={detail.task_name + " · 钱包明细"}
-                  extra={
-                    <button
-                      aria-label="关闭执行明细"
-                      onClick={() => {
-                        setFocused(null);
-                        setDetail(null);
-                      }}
-                    >
-                      <X size={18} />
-                    </button>
-                  }
-                >
-                  {detail.error && <div className="error">{detail.error}</div>}
-                  <div className="results-scroll">
-                    <Table
-                      rows={detail.results || []}
-                      columns={[
-                        {
-                          title: "钱包",
-                          render: (r) => (
-                            <>
-                              <code title={r.address}>{short(r.address)}</code>
-                              <small>{r.name}</small>
-                            </>
-                          ),
-                        },
-                        {
-                          title: "状态",
-                          render: (r) => <Badge status={r.status} />,
-                        },
-                        { title: "积分", render: (r) => r.points ?? "—" },
-                        { title: "原因", render: (r) => r.message || "—" },
-                      ]}
-                    />
-                  </div>
-                  <h3 className="log-title">实时日志与执行尝试</h3>
-                  {detail.attempts?.map((a: Row) => (
-                    <div className="log" key={a.id}>
-                      <div>
-                        第 {a.number} 次尝试 · {labels[a.status]} · 进程退出码{" "}
-                        {a.process_exit_code ?? "尚未退出"}
-                      </div>
-                      <pre>{a.log || "等待 Runner 输出…"}</pre>
-                    </div>
-                  ))}
-                </Panel>
+              {focused && (
+                <ExecutionDetails
+                  key={focused}
+                  executionId={focused}
+                  api={api}
+                  tasks={data.tasks}
+                  capabilities={data.runtime}
+                  onRun={(t) => run(t)}
+                  onChanged={load}
+                  onClose={() => setFocused(null)}
+                />
               )}
               <Panel
                 title="自动执行计划"

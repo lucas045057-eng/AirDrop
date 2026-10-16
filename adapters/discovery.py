@@ -4,7 +4,7 @@ import hashlib
 import re
 from pathlib import PurePosixPath
 from backend.uploads import SECRET_NAME, redact
-from packages.feature_protocol import Evidence, FeatureDefinition, Parameter, WalletInput, parameter_schema
+from packages.feature_protocol import CAPABILITY_REASONS, Evidence, FeatureDefinition, Parameter, WalletInput, parameter_schema
 
 MAX_ANALYSIS_CHARS = 2_000_000
 MAX_NODES = 150_000
@@ -448,7 +448,7 @@ def scan(files: dict[str, bytes]) -> dict:
             RISK.search(functions[r][0].resolve(child.func)) for child in own_nodes(functions[r][1]) if isinstance(child, ast.Call)
         ) for r in closure if r in functions)
         if protected:
-            reasons.append('调用链涉及凭证、认证、代理、安全检查或资金操作；禁止自动应用')
+            reasons.append(CAPABILITY_REASONS[0])
         params = parameters(node)
         fields = {c.value: FIELD_ROLES.get(c.value, 'feature_parameter') for r in closure if r in functions
                   for c in ast.walk(functions[r][1]) if isinstance(c, ast.Constant) and isinstance(c.value, str) and c.value in FIELD_ROLES}
