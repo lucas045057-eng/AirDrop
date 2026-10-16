@@ -90,7 +90,9 @@ def test_build_failure_and_non_requirements_input_are_rejected(docker):
     assert '依赖构建失败' in str(failed.value)
 
 
-def test_container_is_created_with_isolation_limits_and_private_workdir(docker):
+def test_container_is_created_with_isolation_limits_and_private_workdir(docker, monkeypatch):
+    # The fake container needs no ownership changes, so host assertions can read the inputs.
+    monkeypatch.setattr(native, 'grant_container_access', lambda root: True)
     image = make_image(docker, None)
     result = start_container(docker, image, files={'main.py': base64.b64encode(b'print(1)\n').decode(),
                                                    'inputs/wallets.csv': base64.b64encode(b'address\n').decode()},
